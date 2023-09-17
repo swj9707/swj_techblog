@@ -6,10 +6,10 @@ const siteMetadata = {
   description: '개발자 손우진의 기록을 모아둔 블로그입니다.',
   language: 'ko-KR',
   theme: 'system', // system, dark or light
-  siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app',
+  siteUrl: 'https://swj-techblog.vercel.app',
   siteRepo: 'https://github.com/swj9707/swj_techblog',
   siteLogo: '/static/images/character.png',
-  socialBanner: '/static/images/twitter-card.png',
+  socialBanner: '/static/images/main-thumbnail.png',
   mastodon: 'https://mastodon.social/@mastodonuser',
   email: 'wujins58@gmail.com',
   github: 'https://github.com/swj9707',
