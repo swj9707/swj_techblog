@@ -1,23 +1,20 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
-  title: 'Next.js Starter Blog',
-  author: 'Tails Azimuth',
-  headerTitle: 'TailwindBlog',
-  description: 'A blog created with Next.js and Tailwind.css',
-  language: 'en-us',
+  title: '우진의 데브로그',
+  author: 'Woojin Son',
+  headerTitle: "Woojin's Devlog",
+  description: '개발자 손우진의 기록을 모아둔 블로그입니다.',
+  language: 'ko-KR',
   theme: 'system', // system, dark or light
   siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app',
-  siteRepo: 'https://github.com/timlrx/tailwind-nextjs-starter-blog',
-  siteLogo: '/static/images/logo.png',
+  siteRepo: 'https://github.com/swj9707/swj_techblog',
+  siteLogo: '/static/images/character.png',
   socialBanner: '/static/images/twitter-card.png',
   mastodon: 'https://mastodon.social/@mastodonuser',
-  email: 'address@yoursite.com',
-  github: 'https://github.com',
-  twitter: 'https://twitter.com/Twitter',
-  facebook: 'https://facebook.com',
-  youtube: 'https://youtube.com',
-  linkedin: 'https://www.linkedin.com',
-  locale: 'en-US',
+  email: 'wujins58@gmail.com',
+  github: 'https://github.com/swj9707',
+  linkedin: 'https://www.linkedin.com/in/woojin-son-18989b202/',
+  locale: 'ko-KR',
   analytics: {
     // If you want to use an analytics provider you have to add it to the
     // content security policy in the `next.config.js` file.
