@@ -11,8 +11,6 @@ export default function Head() {
       <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000" />
       <link rel="alternate" type="application/rss+xml" href="/feed.xml" />
       <meta content="width=device-width, initial-scale=1" name="viewport" />
-      <meta name="google-site-verification" content="L6gsCCAc2L4mh7MCnINb7fk6vQfAfjJffIBMQod46NY" />
-      <meta name="naver-site-verification" content="70810f9961eaf26bbd5c1d70bd630875a2bdd4b1" />
     </>
   )
 }
