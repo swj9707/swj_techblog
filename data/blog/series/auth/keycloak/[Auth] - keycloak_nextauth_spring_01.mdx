@@ -1,0 +1,389 @@
+---
+title: '[Auth] Keycloak, NextAuth, SpringBoot 삼박자 맞추기 - 01 : keycloak'
+date: '2023-09-28T00:00:00.000Z'
+tags: ['Keycloak', 'Authentication', 'Next.js', 'SpringBoot']
+draft: false
+layout: PostBanner
+images: ['/static/images/blog/01_keycloak/keycloak-nextjs-spring-series-thumbnail.png']
+summary: Keycloak, NextAuth, SpringBoot 연동 가이드, Keycloak Setup 방법
+---
+
+해당 포스팅은 [velog 기술블로그](https://velog.io/@sierra9707/Authentication-NextAuth-Keycloak-Spring-Boot-%EC%82%BC%EB%B0%95%EC%9E%90-%EB%A7%9E%EC%B6%94%EA%B8%B0-Intro) 에서도 볼 수 있습니다.
+포스팅 연재 종료까지 해당 블로그에 동시 연재 예정입니다.
+
+# 😀 Intro
+
+지난 포스팅에서 NextAuth와 Keycloak 에 대해 소개했습니다. 이번 포스팅에서는 Keycloak을 셋업하는 방법에 대해 설명 해 볼까 합니다.
+
+keycloak 이 가지는 이점이 무엇일까요? 제 생각엔 서비스의 확장이 용이하다는 것 입니다.
+일반적으로 Spring 을 처음 공부하는 입장에서 JWT 토큰에 대해 공부하게 된다면, 국룰 처럼 쓰이는 코드들이 있습니다. 바로 아래와 같은 코드들입니다.
+
+```java
+  public Key getSigningkey(String secretKey) {
+        return Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public Claims extractAllClaims(String jwtToken) {
+        return Jwts.parserBuilder()
+            .setSigningKey(getSigningkey(secretKey))
+            .build()
+            .parseClaimsJws(jwtToken)
+            .getBody();
+    }
+
+    public Authentication getAuthentication(String token) {
+        UserDetails userDetails = userDetailsService.loadUserByUsername(getUserEmail(token));
+        return new UsernamePasswordAuthenticationToken(userDetails, "",
+            userDetails.getAuthorities());
+    }
+
+
+    public String createToken(String userEmail, Long validTime) {
+        Claims claims = Jwts.claims().setSubject(userEmail);
+        claims.put("userEmail", userEmail);
+        return Jwts.builder()
+            .setClaims(claims)
+            .setIssuedAt(new Date(System.currentTimeMillis()))
+            .setExpiration(new Date(System.currentTimeMillis() + validTime))
+            .signWith(getSigningkey(secretKey), signatureAlgorithm)
+            .compact();
+    }
+
+    public String getUserEmail(String token) {
+        return extractAllClaims(token).get("userEmail", String.class);
+    }
+
+    public String resolveToken(HttpServletRequest request) {
+        String token = request.getHeader("Authorization");
+        if (token != null) {
+            return token.substring("Bearer ".length());
+        } else {
+            return "";
+        }
+    }
+
+    public ResCode validateToken(String jwtToken) {
+        try {
+            Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(getSigningkey(secretKey))
+                .build().parseClaimsJws(jwtToken);
+            if (!claims.getBody().getExpiration().before(new Date())) {
+                return ResCode.OK;
+            } else {
+                return ResCode.EXPIRED_TOKEN;
+            }
+        } catch (SecurityException e) {
+            return ResCode.TOKEN_INVALID_SIGNATURE;
+        } catch (
+            MalformedJwtException e) {
+            return ResCode.TOKEN_MALFORMED;
+        } catch (
+            UnsupportedJwtException e) {
+            return ResCode.TOKEN_UNSUPPORTED;
+        } catch (
+            ExpiredJwtException | IllegalArgumentException e) {
+            return ResCode.EXPIRED_TOKEN;
+        }
+    }
+
+    public Long getExpiration(String jwtToken) {
+        Date expiration = Jwts.parserBuilder().setSigningKey(getSigningkey(secretKey)).build()
+            .parseClaimsJws(jwtToken).getBody().getExpiration();
+        long now = System.currentTimeMillis();
+        return expiration.getTime() - now;
+    }
+```
+
+제가 예전에 사용하던 JwtUtil 코드를 그냥 그대로 가져왔습니다만, 아마 비슷한 코드를 많이 사용할 것이라 생각합니다.
+
+정말 단순한 형태의 JWT 토큰을 발급 및 검증하는 코드입니다.
+
+```java
+public String createToken(String userEmail, Long validTime) {
+    Claims claims = Jwts.claims().setSubject(userEmail);
+    claims.put("userEmail", userEmail);
+    return Jwts.builder()
+        .setClaims(claims)
+        .setIssuedAt(new Date(System.currentTimeMillis()))
+        .setExpiration(new Date(System.currentTimeMillis() + validTime))
+        .signWith(getSigningkey(secretKey), signatureAlgorithm)
+        .compact();
+}
+```
+
+claim 데이터에는 오직 유저의 이메일만 존재합니다.
+처음에 이런 코드를 작성할 땐, Claim 데이터에 많은 데이터가 필요 할 이유가 있을까 라는 고민을 했습니다.
+하지만 개발을 하다보면 서비스의 규모가 생각했던 것 보다 커질 수도 있고, 비즈니스의 규모가 커지게 된다면, 또 다른 서비스를 기존 서비스에 확장 시켜야 할 수도 있습니다.
+
+마이크로 서비스 구조가 다양한 의견이 있지만, 서비스의 규모가 아주 큰 상황이고 요구사항이 늘어난 상황이라면 고려해야 할 수도 있습니다.
+
+즉 확장을 고려해야 하는 상황에서 위의 코드가 과연 도움이 될 지? 생각 해보면 제 생각은 아니다! 입니다.
+
+위의 코드에는 다음과 같은 문제점이 존재합니다.
+
+- claim 데이터에 변경이 생긴다면(자주 일어나는 일은 아니겠지만) 서버를 다시 빌드해야 한다.
+- 만약 OAuth2 를 도입하게 된다면 그에 맞는 검증 로직을 따로 분리 및 작성을 해야한다. 서버를 다시 빌드해야 한다.
+- 만약 다른 인증 방식을 추가하게 된다면 상당히 머리가 아파진다.
+
+모놀리식 아키텍쳐랴고 해도 보안 서버와 리소스 서버(API 서버)를 분리하는 경우는 자주 있습니다. 아무리 인증서버를 따로 분리해서 코드를 작성한다 하더라도 결국 공통적인 문제는 빌드를 다시해야 할 뿐만 아니라, 새로 도입한 인증 방식의 검증이 어려워진다는 단점이 있습니다.
+
+물론 저를 제외한 코딩을 아주 잘하는 다른 개발자들은 이게 문제가 아니라고 생각할 수 있겠지만, 중요한 건 비즈니스 상에서 기한을 맞추는 것이라 생각합니다.
+
+개발자들 끼리 재미삼아 인증서버를 백지부터 끝까지 개발하는 것은 정말 좋은 경험이 될 수 있지만, 개발자들의 낭만을 충족 시켜주기엔 현실의 시간은 그렇게 넉넉하지 않습니다.
+
+그 뿐만이 아닙니다. 서비스를 개발 및 운영하다보면 운영에 필요한 서비스(Grafana, Kibana 등)를 배치해야 하는 경우도 있습니다. 이런 경우에 해당 서비스마다 계정을 따로 생성하게 된다면 운영하는 입장에서도 상당히 힘든 문제가 될 수 있습니다.
+
+즉 키클록을 사용한다면, 시간과 확장성에 이점이 생기게 됩니다. 새로운 인증 서비스를 확장하거나 새로운 서비스를 론칭하게 된다러도 서비스 마다 보안 서버를 둘 필요도 없고, Redis 등에 토큰 정보를 저장 할 필요도 더이상 없습니다.
+
+사실 위의 코드로 작업한 서버는 토큰 정보를 저장해야 할 Redis 서버가 따로 필요하게 되는데 서비스가 확장 되게 된다면, 결국 Redis에도 결합도가 생기게 됩니다. 키클록을 통해 이러한 결합도를 낮출 수도 있습니다.
+
+# 🔑 Keycloak의 주요 기능
+
+keycloak이란 그럼 도대체 뭘까요? keycloak은 SSO 서비스를 제공해줄 수 있는 오픈소스입니다.
+
+Github : [](https://github.com/keycloak/keycloak)
+공식 사이트 : [](https://www.keycloak.org/)
+
+여기서 SSO란, Single Sign On으로 한 번의 로그인으로 다양한 서비스를 모두 사용할 수 있도록 하는 기술을 의미합니다.
+
+우리가 서비스를 구현할 때 로그인, 로그아웃을 구현하는 데 많은 애를 써야 합니다. 보안과 관련 된 문제고 회원가입을 통해 유저 정보를 저장해야 하는 상황에서는 개인 정보기 때문에 법 적인 문제까지 고민해야 할 수 있습니다.
+
+모든 문제가 어찌 해결된다 하더라도 유저 입장에서는 다양하게 확장 된 서비스 마다 새로운 계정을 만드는 것이 불편하게 느껴질 수 있습니다.
+
+만약에 쇼핑몰 서비스를 운영중인 상황에서 OTT 서비스를 하나 더 추가했을 때, 두 서비스간에 다른 계정을 사용해야 한다면, 유저 입장에서도, 운영진 입장에서도 골치아픈 일이 될 수 있습니다.
+
+개인정보 데이터가 분산되서 처리되어야 하는 등 생각만 해도 머리아픈 문제가 생길 수 있습니다.
+
+keycloak을 사용하게 된다면, 이러한 문제에서 이점을 가져올 수 있습니다. 하나의 keycloak 서버가 다양한 서비스의 인증을 책임 져 줄 수 있기 때문입니다.
+
+# 😃 Keycloak 설정 법
+
+## 🐳 Docker
+
+직접 설치하는 방법도 있지만, 로컬에서 쉽게 셋업하려면 아무래도 Docker를 사용하는 게 편리합니다. 공식 문서에는 Docker를 통해 Keycloak을 쉽게 셋업하는 방법에 대한 가이드가 잘 작성 되어 있습니다.
+
+글을 쓰는 시점에서 최신 버전은 21.1.1입니다.
+
+[](https://www.keycloak.org/getting-started/getting-started-docker)
+
+Docker Compose 를 통해 Keycloak 을 셋업하려면 아래와 같이 셋업하면 됩니다.
+
+```yaml
+version: '3.8'
+services:
+  keycloak-database:
+    image: postgres:latest
+    container_name: keycloak_db
+    expose:
+      - '5433'
+    ports:
+      - '5433:5433'
+    volumes:
+      - ./db/keycloakDB:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: 'keycloak'
+    env_file:
+      - .env
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - '-p 5433'
+    networks:
+      keycloak-nw:
+        aliases:
+          - 'keycloak_db'
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    container_name: keycloak
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-database:5433/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HEALTH_ENABLED: true
+      KC_METRICS_ENABLED: true
+    ports:
+      - '8080:8080'
+    command: start-dev
+    healthcheck:
+      test: 'curl -f http://localhost:8080/admin || exit 1'
+    depends_on:
+      keycloak-database:
+        condition: service_started
+    networks:
+      keycloak-nw:
+        aliases:
+          - 'keycloak'
+
+networks:
+  keycloak-nw:
+    driver: bridge
+```
+
+DB를 따로 셋업 해 주는 이유는, Keycloak 서버는 외부 DB와 연동할 수 있기 때문입니다. 사실 Keycloak 자체적으로 H2 데이터베이스가 배치되어 있습니다만, Docker 로 설치한 이상, 컨테이너가 자주 내려갈 수 있습니다.
+
+즉 데이터를 어딘가에는 백업해야 하는데, 아무리 keycloak 내부에 있는 데이터를 volumns 속성을 통해 백업한다 하더라도 DB에 직접 백업하는 것과 다르게 H2 데이터베이스 상에서 데이터 손실이 일어날 수 있는 우려가 있습니다.
+
+그러므로 따로 Keycloak 용 DB를 따로 두거나, 기존에 사용하고 있는 DB에 스키마를 하나 적용 해서 테스트 하는 것을 추천합니다.
+
+\***\*제가 처음에 Keycloak 을 사용할 때, H2 데이터베이스에 대해 신경쓰지 않고 volumn 속성으로 대충 백업하다 크게 고통을 받았었습니다.\*\***
+
+## Realm & Client
+
+![](/static/images/blog/01_keycloak/01/keycloak_main.png)
+
+Keycloak 은 Admin UI 가 존재합니다. Admin UI를 통해 쉽게 Realm, Client 정보를 수정할 수 있습니다.
+
+Keycloak 을 사용하기 전에 먼저 Realm과 Client에 대해 이해해야 합니다.
+
+Realm 은 쉽게 얘기하면 서비스 범위라고 생각하시면 됩니다. Realm 내에 존재하는 서비스들은 Client라고 부릅니다.
+
+Realm 단위로 인증, 권한 부여가 적용이 되고 Client는 그러한 인증, 권한 부여 행위를 수행 할 애플리케이션들을 나타냅니다.
+
+![](/static/images/blog/01_keycloak/01/keycloak_realm_main.png)
+
+예를 들어 쇼핑몰 Realm 이 존재한다면, 앞서 언급했던 쇼핑몰 Client, OTT Client 등이 존재할 수 있습니다.
+
+각 Client들은 같은 Realm 에 존재하기 때문에 하나의 계정으로 사용할 수 있습니다.
+
+## 💁 Realm Role 설정
+
+Realm 이라는 단위에 유저들이 생성되고 나면 해당 단위에 대한 유저의 Role을 설정 해 줄 수 있어야 합니다.
+
+Realm 에 참여하고 있는 유저들은 일반 유저일 수도 있지만, 어드민일 수도 있습니다.
+
+그러므로 유저에 따라 권한을 다르게 부여 해 주어야 합니다. 쉽게 생각하면, 쇼핑몰 Realm 이 있으면 해당 Realm 에 참여하는 유저는 일반 유저, 관리자, 유지보수 엔지니어, 개발자 등 다양한 Role을 가질 수 있게 됩니다.
+
+![](/static/images/blog/01_keycloak/01/realm_roles.png)
+
+간략하게 나눠서 User와 Admin 으로 나눠 보겠습니다.
+
+![](/static/images/blog/01_keycloak/01/realm_roles_ex.png)
+
+Role을 생성하기만 해서 끝이 나는 건 아닙니다. 각 Role마다 권한을 부여할 수 있습니다. User Role을 가진 유저가 Realm 의 관리 권한을 가져서는 안되겠죠. 반대로 Admin Role을 가진 유저가 관리 권한이 따로 없다면, User Role과 차이가 없어서 아무런 의미가 없는 Role 정보가 될 수 있습니다.
+
+추가할 수 있는 Role의 범위는 Realm 범위와 Client 범위(다음 단락에서 더 자세하게 설명하겠습니다.)로 나뉩니다. Realm 범위는 말 그대로 전체 Realm 내에서의 Role을 의미합니다. 좀 더 상세한 Role은 Client Role에서 설정할 수 있습니다.
+
+예를 들면, 운영자와 선임 운영자라는 Role이 있을 때 유저를 새로 등록하는 권한은 선임 운영자에게만 있다고 가정 해 보겠습니다. 유저를 새로 등록하는 권한 그 자체는 Realm Role이 가질 수 있는 하나의 Role이 됩니다. 전체 서비스의 범위내에서의 큰 Role인 Realm Role은 앞서 말씀드린 유저, 운영자 등이지만 그 Role이 client 마다 가질 수 있는 Role, 즉 세부 Role은 Client Role을 통해 선언 합니다.
+
+## Client 정보 설정 및 Role 설정
+
+![](/static/images/blog/01_keycloak/01/client_info.png)
+
+Client Role은 서비스 내의 Role을 의미합니다. Realm 내의 큰 범위의 Role이 아닌 세부적인 Client 내의 Role은 여기서 설정할 수 있습니다.
+
+직접 선언한 Client 말고 사진에 언급되어있듯, admin-cli, realm-management 등 Realm 영역에서 어드민 역할을 할 수 있는 client 들이 존재합니다.
+
+해당 client 내에 선언 되어있는 Role들은 실제 Realm Role 에서 세부적으로 할당시켜줄 수 있는 Role입니다.
+
+다음 포스팅에서 더 자세히 언급 드리겠지만, Spring Boot와 Keycloak Admin Client를 연결할 때 해당 Role들을 주의깊게 신경써야 합니다.
+
+현재까지의 포스팅에서 Keycloak을 처음 보게 되었다면, Realm Role과 Client Role의 차이 정도 이해하셨으면 충분합니다.
+
+![](/static/images/blog/01_keycloak/01/client_roles_ex.png)
+
+![](/static/images/blog/01_keycloak/01/client_roles_assign_ex.png)
+
+위 사진은 Client Role 생성 예시, 해당 Role에 Client, Realm Role을 할당하는 예시입니다.
+
+좀 더 자세한 이야기는 다음 포스팅, 스프링 부트와의 연동에서 진행하겠습니다.
+
+![](/static/images/blog/01_keycloak/01/client_roles_ex2.png)
+
+Client Role은 서비스 내의 Role을 의미합니다. Realm 내의 큰 범위의 Role이 아닌 세부적인 Client 내의 Role은 여기서 설정할 수 있습니다.
+
+직접 선언한 Client 말고 사진에 언급되어있듯, admin-cli, realm-management 등 Realm 영역에서 어드민 역할을 할 수 있는 client 들이 존재합니다.
+
+해당 client 내에 선언 되어있는 Role들은 실제 Realm Role 에서 세부적으로 할당시켜줄 수 있는 Role입니다.
+​
+다음 포스팅에서 더 자세히 언급 드리겠지만, Spring Boot와 Keycloak Admin Client를 연결할 때 해당 Role들을 주의깊게 신경써야 합니다.
+​
+현재까지의 포스팅에서 Keycloak을 처음 보게 되었다면, Realm Role과 Client Role의 차이 정도 이해하셨으면 충분합니다.
+
+![](/static/images/blog/01_keycloak/01/client_role_ex3.png)
+
+## OpenID Connect API
+
+여기까지 진행하셨다면, 새로운 클라이언트를 생성 했을 것입니다. 아직 생성하지 않았다면 다음의 가이드를 따르시면 됩니다.
+
+![](/static/images/blog/01_keycloak/01/client_ex.png)
+
+먼저 Client Type을 OpenID Connect로 설정 해 줍니다. 다른 선택지로 SAML 이 있는데, SAML 인증은 조금 더 보안에 신경 쓴 방식으로 이해하고 있습니다.
+
+[](https://www.okta.com/kr/identity-101/whats-the-difference-between-oauth-openid-connect-and-saml)
+
+위의 링크에서 차이점을 알 수 있었습니다. 둘 다 Single Sign On 을 위해 필요한 기술이지만, 가장 결정적인 차이로는 JWT를 사용하는 방식이냐 아니냐였습니다. 흔히 OAuth 인증을 구현하게 된다면 JWT토큰을 사용하게 되지만 SAML 에서는 XML SAML 형식을 통해 인증이 진행됩니다.
+
+![](/static/images/blog/01_keycloak/01/client_ex2.png)
+
+기초 설정이 끝났다면, Client Authentication, Authorization 옵션을 켜 줍니다. 해당 옵션들은 Service Accounts Roles 옵션을 활성화 시키기 위해 필요합니다.
+
+여기까지 진행하셨다면, Client 페이지에서 Credentials 탭을 확인할 수 있습니다. Credentials 탭으로 진입하게 된다면 Client Secret 데이터를 전달 받을 수 있습니다.
+
+![](/static/images/blog/01_keycloak/01/client_ex3.png)
+
+해당 데이터는 OpenID Connect API 를 사용하기 위해 필요합니다. Create Client 이미지를 확인 해 보셨겠지만, Client Authentication, Authorization 옵션을 활성화 하였기 때문에 허가받지 않은 유저가 Realm 에 인증을 할 수는 없습니다.
+
+해당 옵션을 통해 Service Account 가 활성화 됩니다. 여기서 Service Accout란, 해당 Client에 접근 권한을 가진, 해당 Client 를 대표해서 요청을 보낼 수 있는 유저 키라고 생각 하시면 됩니다.
+
+![](/static/images/blog/01_keycloak/01/postman_ex.png)
+
+이제 여기까지 오셨다면, POST MAN 혹은 Curl 을 통해 OpenID Endpoint 의 정보들을 확인할 수 있습니다.
+
+```bash
+curl -X GET http://localhost:8080/realms/{realmName}/well-known/openid-configuration
+```
+
+해당 Endpoint 들을 통해 Keycloak 에서 유저 정보를 받아오거나 할 수 있습니다. 해당 API는 가이드 용도라 특별히 권한이 필요없습니다.
+
+여기까지 셋업했다면 keycloak 의 기초 셋업은 어느정도 정리 되었습니다. 이후로의 셋업은 사실 서비스의 개발 방향에 따라 달라질 수 있겠습니다만, 마지막으로 토큰 정보 생성 및 리프레쉬 토큰 발급까지 가이드를 드리고 마무리 하겠습니다.
+
+## Token API
+
+> http://localhost:8080/realms/{realmName}/protocol/openid-connect/token
+
+위의 앤드포인트를 통해 유저의 토큰 정보를 받아올 수 있습니다. 즉 Authentication 을 진행할 수 있습니다.
+
+우선 테스트를 위해 아까 생성했던 Realm 에 유저를 한명 추가 해 보겠습니다.
+
+![](/static/images/blog/01_keycloak/01/user_ex.png)
+
+그 후 아까 생성했던 client의 credential code를 통해 Token 정보를 받아 보겠습니다. 위의 엔드포인트에 `POST` API 를 전달하되, 파라미터들은 x-www-form-urlencoded 형태로 전달 되어야 합니다.
+
+![](/static/images/blog/01_keycloak/01/postman_ex2.png)
+
+![](/static/images/blog/01_keycloak/01/postman_ex3.png)
+
+토큰이 언제 만료되는 지, refresh token 데이터는 어떻게 구성되어있는지를 확인할 수 있습니다.
+
+토큰 만료시간, 리프레시 토큰 만료 시간 여부, claim 데이터 등은 keycloak 내에서 변경 가능합니다.
+
+반대로 Refresh Token 은 아래와 같은 방법으로 사용할 수 있습니다. 아래는 Refresh Token 을 파라미터로 새로운 토큰을 발급받는 예시입니다.
+
+![](/static/images/blog/01_keycloak/01/postman_ex4.png)
+
+grant_type을 refresh_token으로 변경하고 발급 받았던 refresh_token 을 전달하면 새로운 토큰이 생성되는것을 확인할 수 있습니다.
+
+# 👏 Outro
+
+지금까지 간단한 Keycloak 셋업 법 및 OpenID connect API 를 통해 Token 정보를 받아오는 법을 알아보았습니다.
+
+실제로 이러한 방법보다는 Login URL을 전달해서 로그인 데이터를 직접 전달받는 방법도 많이 사용하는것으로 알고 있지만, 로그인 화면을 직접 개발 한 경우에 이런 API를 연동시키거나 Spring Boot와 Keycloak Admin Client 를 연동해서 인증을 중계하는 방식으로 처리하는것으로 알고 있습니다.
+
+저같은 경우엔 인증과 관련된 요청은 모두 Keycloak 에 위임하다시피 해서 개발했습니다. 인증에 대한 책임과 인가(권한) 에 대한 책임을 분리하고 Resource Server 그 자체의 목적대로 사용되기 위해 Spring 에서는 JWT 토큰을 분석하는 코드 외에 생성에는 전혀 관여하지 않았습니다.
+
+유저는 프론트엔드에서 Keycloak 을 향해 로그인 요청을 보내게 되고 Keycloak이 전달해 준 토큰 정보를 통해 Spring Boot API 서버에 요청을 보내게 됩니다. Spring Boot API 서버는 해당 토큰의 발급 경로를 확인하여 토큰이 유효한 토큰인지 확인하게 되고 토큰 내의 정보를 분석하여 Role 정보를 확인할 수 있습니다.
+
+다음 포스팅에서는 Token 커스터마이징 법과 Spring Boot API 서버 셋팅 법에 대해 이야기 해 보도록 하겠습니다.
+
+[](https://www.keycloak.org/documentation)
+
+좀 더 자세한 정보는 키클록 공식 문서에 상세히 설명 되어 있습니다. OpenId connect API를 활용한 예시는 아래 링크에 자세히 나와있습니다.
+
+[](https://www.keycloak.org/docs/latest/securing_apps/#other-openid-connect-libraries)
