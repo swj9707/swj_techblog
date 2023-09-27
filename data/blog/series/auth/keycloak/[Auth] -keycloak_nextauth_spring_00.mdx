@@ -1,0 +1,188 @@
+---
+title: '[Auth] Keycloak, NextAuth, SpringBoot 삼박자 맞추기 - 00 : Intro'
+date: '2023-09-27'
+tags: ['Keycloak', 'Authentication', 'Next.js', 'SpringBoot']
+draft: false
+layout: PostBanner
+images: ['/static/images/blog/01_keycloak/keycloak-nextjs-spring-series-thumbnail.png']
+summary: Keycloak, NextAuth, SpringBoot 연동 가이드
+---
+
+해당 포스팅은 [velog 기술블로그](https://velog.io/@sierra9707/Authentication-NextAuth-Keycloak-Spring-Boot-%EC%82%BC%EB%B0%95%EC%9E%90-%EB%A7%9E%EC%B6%94%EA%B8%B0-Intro) 에서도 볼 수 있습니다.
+포스팅 연재 종료까지 해당 블로그에 동시 연재 예정입니다.
+
+# Intro
+
+간만에 새로운 주제를 가지고 왔습니다. 사이드 프로젝트를 개발중인 개발자들에게는 아주 유용할 뿐더러, 아직 블로그들에 많은 정보가 있지 않은 주제인 것 같았습니다.
+Keycloak, NextAuth, SpringBoot 이 세가지의 조합은 과연 어떨까요?
+
+결론만 말씀드리자면, 생각보다 괜찮고 새로운 서비스를 런칭하는 경우에 유용하게 쓸 수 있지 않을까? 라는 생각이 들 정도입니다.
+
+이번 시리즈에서는 최근에 맡았던 프로젝트에서 NextAuth, Keycloak, Spring boot를 활용한 인증 전략을 성공적으로 도입한 사례를 소개할까합니다.
+
+# NextAuth?
+
+![NextAuth_Logo](/static/images/blog/01_keycloak/nextauth-logo.png)
+
+Next.js를 통해 React Application을 개발하는 것은 상당히 자주 보이는 패턴입니다. 단순 Create React App을 통해 React Application을 개발하는 것 보다 이점이 있다면 아래와 같습니다.
+
+Server Side Rendering을 사용할 수 있다.
+곧, 내장된 Express.js 서버를 활용할 수 있다.
+Front-end Application을 배포하기 위해 여러 복잡한 과정을 거치지 않아도 된다.
+세번째 이점의 경우는 과거에 제가 React.js 애플리케이션을 배포하기 위해서 NGINX에 직접 스테틱 데이터를 집어넣었는데, 자체적인 서버를 내장하고 있다는 것은 이러한 문제를 쉽게 해결할 수 있단 장점으로 다가옵니다.
+
+NextAuth를 사용해보면서 느낀 장점은 인증이 일어난 직후 전략들에 대해 쉽게 구현이 가능하다는 것 입니다. NextAuth가 제공해주는 JWT, Session 콜백 함수들을 잘 활용한다면, NextAuth가 없이 개발하는 것 보다 훨씬 유연하게 애플리케이션을 개발할 수 있습니다.
+
+# Keycloak
+
+![keycloak_logo](/static/images/blog/01_keycloak/keycloak-logo.png)
+
+예전에 프로젝트를 진행할 때는 이미 완성 되어있는 인증 전략들을 사용하거나, 직접 JWT 토큰 생성 로직 및 검증 로직을 작성했습니다. 후자의 경우는 토큰을 생성하고 검증하는 모든 과정을 커스터마이징 할 수 있다는 것이었으나, 처음 JWT 토큰에 대해 공부한 이후 시간이 지날수록 기존의 코드들이 Boiler Plate 처럼 정형화 되어있다는 생각이 들었습니다.
+
+사실 JWT토큰을 생성하고 검증하는 데 있어서 깊은 알고리즘 적인 고려가 들어간 적은 지금까지의 제 프로젝트에서는 없었습니다. 그저 JWT 라이브러리를 활용해서 토큰을 생성하고, 생성 된 토큰을 검증하고, 토큰이 검증이 되거나 에러가 났다면 그 에러를 핸들링하는 Handler를 Spring Security 등에 배치하는 식으로 개발을 했습니다.
+
+이러한 패턴들은 처음에 공부할 땐 Spring Security를 사용하는 방법, JWT토큰에 대해 공부할 때는 도움이 되었으나, 실제로 프로젝트를 빠르게 완성해야 하는 상황에 대입하기는 힘들었습니다.
+
+JWT 토큰 내에 들어갈 Payload 데이터들은 어떻게 커스터마이징 할 것이냐? 라는 질문에 그저 claim 데이터를 추가하면 그만 아닌가? 라고 생각했지만, JWT 토큰의 생성 로직이 Spring Boot 서버에 작성 되어있다는 것 자체가 결국 '변경이 될 때 마다 Build 가 되어야하고 재배포가 되어야 한다.' 라는 문제점을 야기했습니다.
+
+그러므로 키클록을 도입해서 인증에 대한 로직은 Spring Boot 외부로 빼고, Spring Boot는 오직 Resource Server의 역할만 하도록 개발하는 방향을 선택했습니다.
+
+# 세가지 조합의 이점
+
+앞서 말씀드렸듯이, Spring Boot는 오직 Resource Server의 역할만 하면 됩니다. 만료 된 토큰이 서버에 전달된다면 기존에 제 프로젝트에서는 Handler 를 따로 작성했었습니다.
+
+- JWT 토큰 내 에러 처리 로직
+
+```java
+ public ResCode validateToken(String jwtToken) {
+    try {
+         Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(getSigningkey(secretKey))
+            .build().parseClaimsJws(jwtToken);
+        if (!claims.getBody().getExpiration().before(new Date())) {
+            return ResCode.OK;
+        } else {
+            return ResCode.EXPIRED_TOKEN;
+        }
+    } catch (SecurityException e) {
+        return ResCode.TOKEN_INVALID_SIGNATURE;
+    } catch (
+        MalformedJwtException e) {
+        return ResCode.TOKEN_MALFORMED;
+    } catch (
+        UnsupportedJwtException e) {
+        return ResCode.TOKEN_UNSUPPORTED;
+    } catch (
+        ExpiredJwtException | IllegalArgumentException e) {
+        return ResCode.EXPIRED_TOKEN;
+    }
+}
+```
+
+```java
+@Component
+@Slf4j
+public class CustomAuthenticationEntryPoint implements AuthenticationEntryPoint {
+
+    @Override
+    public void commence(HttpServletRequest request, HttpServletResponse response,
+        AuthenticationException authException) throws IOException {
+        String exception = request.getAttribute("exception").toString();
+        log.error("UNAUTHORIZED ERROR : " + exception);
+        if (!Objects.equals(exception, ResCode.TOKEN_INVALID_SIGNATURE.getErrorCode())) {
+            if (Objects.equals(exception, ResCode.TOKEN_MALFORMED.getErrorCode())) {
+                setErrorResponse(response, ResCode.TOKEN_MALFORMED);
+            } else if (Objects.equals(exception, ResCode.TOKEN_UNSUPPORTED.getErrorCode())) {
+                setErrorResponse(response, ResCode.TOKEN_UNSUPPORTED);
+            } else if (Objects.equals(exception, ResCode.TOKEN_ILLEGAL_ARGUMENT.getErrorCode())) {
+                setErrorResponse(response, ResCode.TOKEN_ILLEGAL_ARGUMENT);
+            } else if (Objects.equals(exception, ResCode.EXPIRED_TOKEN.getErrorCode())) {
+                setErrorResponse(response, ResCode.EXPIRED_TOKEN);
+            } else {
+                setErrorResponse(response, ResCode.UNAUTHORIZED);
+            }
+        } else {
+            setErrorResponse(response, ResCode.TOKEN_INVALID_SIGNATURE);
+        }
+    }
+
+    private void setErrorResponse(HttpServletResponse res, ResCode tokenStatus) throws IOException {
+        res.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        res.setStatus(HttpStatus.UNAUTHORIZED.value());
+        res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000");
+        res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,PUT,OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "*");
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Access-Control-Max-Age", "3600");
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.writeValue(res.getOutputStream(), BaseRes.fail(tokenStatus));
+    }
+}
+```
+
+보기만 해도 끔찍한 코드입니다. JWT 토큰에서 발생한 에러들에 대해 핸들링이 발생하지만, Frontend에서 해당 에러들에 대해 핸들링을 할 수 있도록 하기 위해 장황한 코드들이 작성되어야 할 뿐더러, 만약 Frontend의 도메인이 변경되거나 한다면, 결국 다시 빌드해야 하는 복잡한 상황들이 발생합니다.
+
+하지만, Keycloak을 Authentication Provider로 배치한다면 Spring Boot 애플리케이션에서는 에러에 대한 책임을 지지 않아도 됩니다. 그저 날아오는 토큰이 인증되지 않은 사용자의 것이라면, 401 에러를 날려버리면 그만입니다. 성능에는 아무런 영향이 없지만, 고려하는 데 알고리즘 적인 요소가 하나도 들어가지 않는 위와 같은 코드들을 더이상 작성하지 않아도 됩니다.
+
+그럼 401에러가 났을 때 프론트엔드에서 어떻게 에러를 핸들링 하느냐? 라는 고민이 있을 수 있지만, 놀랍게도 NextAuth를 활용하면 아주 쉽게 문제를 해결 할 수 있습니다. 인증에 대한 책임을 Keycloak이 가졌다면, 토큰 관리에 대한 책임을 Frontend에 맡김으로써 해결이 가능합니다.
+
+물론 Keycloak, NextAuth를 쓰지 않는다고 해당 문제들을 해결하지 못 하는 것은 아니지만, 작성해야 할 코드들이 많아지고 프로젝트 내의 코드들이 복잡해지며, 유지보수성이 떨어지는 문제가 생깁니다.
+
+Keycloak이 없는 대로 Spring Boot내에 JWT 토큰 생성 로직을 작성하면 되고, Next.js 혹은 React.js 기반 Node 애플리케이션에서 Axios Interceptor를 통해 로직을 구현하면 그만이지만, 가장 큰 장점은 책임이 분배되었기 때문에 높은 확장성을 가진다는 것입니다.
+
+```typescript
+export const CustomAxios = axios.create({
+  baseURL: baseUrl,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  withCredentials: true,
+  paramsSerializer: {
+    serialize: (params) => {
+      return qs.stringify(params, { arrayFormat: 'repeat' })
+    },
+  },
+})
+
+CustomAxios.interceptors.request.use((config) => {
+  /*
+    여기에 토큰 확인 및 유효시간 확인 로직을 구현하고
+    유효시간이 다 되었을 때 토큰 재발급 로직 구현하면 됩니다.
+    */
+
+  if (config.data instanceof FormData) {
+    config.headers['Content-Type'] = 'application/form-data'
+  } else {
+    config.headers['Content-Type'] = 'application/json'
+  }
+  return config
+})
+```
+
+> 직접 구현하면 되지만, Axios의 객체의 책임이 늘어나게 되고 이는 확장성에 제약사항이 될 수 있습니다.
+
+NextAuth를 사용하게 된다면 위의 코드에 장황한 로직이 전혀 들어가지 않게 되고 오직 한 두줄의 코드가 추가됩니다.
+
+```typescript
+CustomAxios.interceptors.request.use(async (config) => {
+  const session = await getSession()
+  if (session) {
+    config.headers.Authorization = 'Bearer ' + session.tokenInfo.accessToken
+  }
+
+  if (config.data instanceof FormData) {
+    config.headers['Content-Type'] = 'application/form-data'
+  } else {
+    config.headers['Content-Type'] = 'application/json'
+  }
+  return config
+})
+```
+
+그리고 요청을 보내는 과정에서 JWT 콜백 함수 등이 작동 함으로써 토큰의 관리 또한 쉽게 구현할 수 있습니다.
+물론 해당 로직들은 Authentication Provider에 따라 직접 구현해야하고 저 또한 해당 로직은 직접 구현하였습니다. 하지만 객체간에 책임이 분배됨에 따라 더이상 Axios 와 관련 된 코드를 건드리지 않고 오직 NextAuth의 콜백함수를 작성하는 것 만으로 해당 문제를 해결했습니다.
+
+# Outro
+
+지금까지 세가지 기술의 조합의 이점에 대해 말씀 드렸습니다. 이번 시리즈를 통해 프로젝트에서 인증을 구현할 때 확장성을 고려하기 위해 선택 할 수 있는 선택지를 하나 더 가져가셨으면 합니다.
+
+다음 포스팅은 키클록 설정법입니다. 곧 돌아오겠습니다.
