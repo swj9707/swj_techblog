@@ -1,0 +1,169 @@
+---
+title: '[Trouble Shoot] - 2023.11.09 페이징 성능 개선'
+date: '2023-11-10'
+lastmod: '2023-11-10'
+tags: ['Trouble shoot', 'Paging', 'SpringBoot', 'Java', 'JPA']
+draft: false
+summary: 금주에 발생한 페이징 성능 저하 이슈를 해결하기 위해 고민했던 기록.
+---
+
+# 😀 Intro
+
+페이징을 구현하는 과정에서 성능이 저하될 수 있다는 사실은 익히 들어 알고 있었습니다.  
+Offset 기반의 페이징은 성능 이슈에 신경을 쓸 수밖에 없습니다. 그럼에도 막상 Frontend와 연동했을 때 성능 이슈가 발생하였고, 해당 문제를 해결하느라 며칠 간 고생을 했습니다.
+
+저희 팀에서는 1차적으로 페이징 쿼리에 부하를 주지 않기 위해 3년 치 범위의 데이터만 조회하는 방향으로 문제의 범위를 좁혔습니다.
+조회되는 데이터의 범위를 픽스 하는 것 만으로도 테스트 커버리지가 무한정 늘어나지 않을 수 있었습니다.
+
+그럼에도 실제 서버에 배포했을 때 페이지 조회 시 1초 이상의 시간이 소요되는 문제가 발생했습니다. 아직 테스트 기간이라 상관은 없었지만, 실제 서비스로 릴리즈 되었을 때 큰 불만 사항으로 이어질 수 있는 문제였습니다.
+
+페이징 방법을 바꾸기엔 Pagination 버튼 기능을 사용하기 위해선 결국 offset과 limit에 대한 정보가 필요했습니다.
+그리고 총 데이터가 얼마나 조회되었고, 몇 개의 페이지가 생성 되었는지에 대한 정보가 필요했기에 방법을 바꾸는 게 문제는 아니었습니다.
+
+이번 포스팅에서는 금주에 발생한 페이징 성능 저하 문제를 어떻게 해결하였는지에 대해 이야기 해 보겠습니다.
+
+# 🧐 페이징 방식에 대한 고찰
+
+단순히 성능을 개선하기 위해 Offset 기반 페이징을 포기하는 것은 문제가 있습니다. 페이징 방법은 성능이 아닌 요구사항에 따라 달라지는 것이니까요.
+
+요구사항에 페이지네이션 버튼이 존재해야 한다면, 그리고 총 검색 결과를 출력해야 한다면 No Offset 방식의 페이징이 반드시 정답이 될 수 없습니다.
+그리고 복잡한 정렬조건이 들어가게 된다면 또 얘기는 달라지죠.
+
+반드시 Offset 기반의 페이징을 구현해야만 할 때 성능에 이슈가 생기지 않으려면 두 가지 방법을 고려해볼 수 있습니다.
+
+## 커버링 인덱스
+
+커버링 인덱스란 쿼리를 충족시키는 데 필요한 모든 데이터를 가지고 있는 인덱스를 의미합니다. 쉽게 얘기하면 쿼리 상에 포함되는 모든 컬럼이 Index 컬럼에 포함 되는 경우입니다.
+보통은 `Select` 절을 제외 한 나머지 컬럼들은 index 가 걸린 컬럼을 우선으로 사용하는 방법입니다.
+
+```sql
+SELECT *
+FROM TABLE_DATA
+WHERE 1=1
+    AND ...
+ORDER BY seq DESC
+OFFSET pageNo
+LIMIT pageSize
+```
+
+일반적인 페이징 쿼리입니다. 커버링 인덱스를 사용한다면 아래와 같이 변화할 수 있습니다.
+
+```sql
+SELECT *
+FROM TABLE_DATA as d
+JOIN (SELECT seq
+        FROM TABLE_DATA
+        WHERE 1=1
+            AND ...
+        ORDER BY seq DESC
+        OFFSET pageNo
+        LIMIT pageSize) AS tmp ON tmp.seq = d.seq
+```
+
+TABLE_DATA 의 seq 에 index가 걸려있다고 가정해보면, 1차적으로 인덱스를 통해 항목들을 빠르게 걸러서 조회할 수 있습니다.
+
+## 필요한 값을 캐싱하기
+
+여기에 추가로 페이지 조회가 처음 일어날 때 필요한 값을 캐싱하는 방법으로도 문제를 해결할 수 있습니다.
+Offset 기반 페이징이 이뤄질 때 또 다른 성능 저하 요인은 Count 쿼리입니다. 매번 페이지 쿼리를 날릴 때 Count만 줄일 수 있어도 적지않은 성능 개선을 기대할 수 있습니다.
+하지만 Count 값 자체는 반드시 필요합니다. 페이지의 총 갯수를 계산하는 데 사용되기 때문입니다.
+
+```java
+public abstract class BasePageRes<T> {
+    private List<T> contents;
+    private int pageNo;
+    private boolean isLast;
+    private int totalPages;
+    private long totalElements;
+}
+```
+
+제가 주로 사용하는 페이징 API Response VO 패턴입니다. Spring 의 Page 객체에서 Frontend에 필요할 법한 데이터들이 대부분 명세되어 있습니다.
+Frontend는 해당 형태로 전달 된 Response 중 totalElements 를 캐싱할 수 있겠죠. 그럼 다음 페이지에 대한 요청부터는 해당 값을 전달하는 방식으로 문제를 해결 할 수 있습니다.
+
+물론 실시간으로 계속해서 업데이트 되는 데이터에 대한 대응까지 들어가야 한다면 해당 방법은 사용할 수 없습니다.
+
+# 😥 실제로 페이징이 느려진 이유는?
+
+문제는 조인이었습니다. 페이지를 생성하고 보여주는 과정에서 하나의 요구사항에 대한 잘못된 대응이 성능 저하를 일으켰습니다.
+
+```java
+@Entity
+public class Posting {
+
+    @Id
+    private Long id;
+    private String writer;
+    private String title;
+    private String contents;
+
+    @OneToMany(mappedBy = "posting", orphanRemoval = true, cascade = CascadeType.REMOVE, fetch = FetchType.LAZY)
+    private List<CategoryInfo> categoryInfo = new ArrayList<>();
+}
+```
+
+```java
+@Entity
+public class CategoryInfo {
+
+    @Id
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "POSTING_SEQ")
+    private Posting posting;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "CATEGORY_SEQ")
+    private Category category;
+
+}
+```
+
+```java
+@Entity
+public class Category {
+
+    @Id
+    private Long id;
+    private String categoryName;
+    private String categoryCode;
+
+    @OneToMany(mappedBy = "category", orphanRemoval = true, cascade = CascadeType.REMOVE, fetch = FetchType.LAZY)
+    private List<CategoryInfo> categoryInfo = new ArrayList<>();
+}
+```
+
+```java
+@Entity
+public class CategoryClosure {
+
+    @Id
+    private Long id;
+    private Long ascendantId;
+    private Long descentantId;
+    private int level;
+}
+```
+
+서비스는 대략 이런 형태로 설계 되어있었습니다. (어디까지나 예시입니다.)
+게시물에 대한 카테고리 정보가 있고, 게시글과 카테고리 사이 다대다 매핑을 해주는 테이블이 존재했습니다. 그리고 카테고리 간 상하관계는 클로저 테이블을 통해 관리하고 있었습니다.
+
+요구사항은 데이터에 대한 페이징 조회 시 대분류 / 중분류 / 소분류 형태로 데이터를 보여달라는 것이었습니다. 예시는 아래와 같습니다.
+
+| 게시글 번호 | 제목        | 작성자  | 카테고리               |
+| ----------- | ----------- | ------- | ---------------------- |
+| 5           | 게시글제목5 | 테스트5 | 게시판/자유게시판/Q&A  |
+| 4           | 게시글제목4 | 테스트4 | 게시판/자유게시판/잡담 |
+| 3           | 게시글제목3 | 테스트3 | 게시판/자유게시판/TIP  |
+| 2           | 게시글제목2 | 테스트2 | 게시판/자유게시판/잡담 |
+| 1           | 게시글제목1 | 테스트1 | 게시판/자유게시판/Q&A  |
+
+게시글 테이블을 페이징 하는 것은 큰 문제가 아니었지만, JPA를 사용하다보니 카테고리 정보를 가져오는 과정에서 N+1 문제가 발생했습니다.
+
+## 😰 N+1 문제?
+
+JPA를 사용할 때 반드시 만나게 될 이슈입니다. 엔티티를 조회할 때 조회 된 데이터 갯수만큼 연관관계에 대한 조회 쿼리가 추가로 발생하는 상황을 의미합니다.  
+게시글과 카테고리 간에 연관관계를 조회하는 과정에서 N+1 이 발생했습니다. 페이징이 끝난 후, 해당 게시글과 관련이 있는 모든 정보를 JOIN해야 했고, LazyFetch 를 통해 카테고리의 대분류/중분류/소분류 데이터를 만드는 과정에서 쿼리가 더 전달 된 것입니다.
+
+N+1 문제를 해결하는 방안은 여러가지가 있습니다. 현재 상황에서는 @OneToMany 로 조회되는 데이터에 대해 개선이 필요하겠죠.
