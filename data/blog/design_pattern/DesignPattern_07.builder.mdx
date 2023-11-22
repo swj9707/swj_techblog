@@ -1,0 +1,283 @@
+---
+title: '[Design Pattern] 06 - Prototype Pattern'
+date: '2023-11-19T00:00:00.000Z'
+tags: ['DesignPattern', 'Java']
+draft: false
+summary: Java 언어로 배우는 디자인 패턴 입문 정리 노트 일곱 번째. Builder 패턴에 대하여.
+---
+
+# Reference
+
+- https://www.yes24.com/Product/Goods/115576266
+- 토비의 스프링 3.1
+
+> 해당 포스팅은 `JAVA 언어로 배우는 디자인 패턴 입문` 의 내용을 정리 한 내용입니다.
+
+# Intro
+
+Builder 패턴은 구조를 가진 인스턴스를 만들어가는 패턴입니다. 보통 생성자를 통해 인스턴스를 생성하는 경우엔 생성자에 필요한 파라미터를 대입해서 인스턴스를 생성합니다.
+
+하지만 상황에 따라 모든 필드값에 대한 파라미터가 필요 없을 수도 있습니다. 이런 모든 상황에 맞춰서 생성자를 만든다면 클래스 파일의 코드가 매우 복잡해질 수 있습니다.
+
+그러므로 마치 빌딩을 짓듯이 인스턴스에 필요한 구성요소를 차례대로 가져와서 인스턴스를 생성하는 패턴을 `Builder` 패턴이라고 합니다. 모든 필드값들에 대한 경우의 수를 커버하는 생성자들을 모두 생성 할 필요가 없게되죠.
+
+# 예제 프로그램
+
+Builder 패턴을 활용해서 문서를 작성하는 프로그램을 만들어보겠습니다. 문서는 다음과 같은 구조로 되어있습니다.
+
+- 타이틀을 하나 포함한다.
+- 문자열을 몇 개 포함한다.
+- 항목을 몇 개 포함한다.
+
+구조를 보았을 때 몇 개를 받을 수 있는 항목이 있다는 것을 보아 몇 개에 대한 생성자를 모두 개발하는 방법으로 대응했다간 끝이 없을 수 있다는 것을 알 수 있습니다.
+
+| 이름        | 설명                                                |
+| ----------- | --------------------------------------------------- |
+| Builder     | 문서를 구성하기 위한 메소드를 규정한 추상 클래스    |
+| Director    | 하나의 문서를 만드는 클래스                         |
+| TextBuilder | 텍스트(일반 문자열)을 이용하여 문서를 만드는 클래스 |
+| HTMLBuilder | HTML 파일을 이용하여 문서를 만드는 클래스           |
+| Main        | 동작 테스트용 클래스                                |
+
+```java
+public abstract class Builder {
+    public abstract void makeTitle(String title);
+    public abstract void makeString(String str);
+    public abstract void makeItems(String[] items);
+    public abstract void close();
+}
+```
+
+`Builder` 클래스는 문서를 만드는 메소드들을 선언한 춧아 클래스입니다. 각 `make` 메소드들은 문서에 필요한 제목, 문자열, 항목 등을 구축하는 메소드입니다. close 메소드는 최종적으로 문서를 완성하는 메소드입니다.
+
+```java
+public class Director {
+    private Builder builder;
+
+    public Director(Builder builder) {
+        this.builder = builder;
+    }
+
+    public void construct() {
+        builder.makeTitle("Greeting");
+        builder.makeString("일반적인 인사");
+        builder.makeItems(new String[]{"How are you?", "Hello.", "Hi."});
+        builder.makeString("시간대별 인사");
+        builder.makeItems(new String[]{
+            "Good morning.",
+            "Good afternoon.",
+            "Good evening"
+        })
+        builder.close();
+    }
+}
+```
+
+`Director` 클래스는 Builder 클래스에서 선언 된 메소드를 통해 문서를 만듭니다. 단, Builder 그 자체는 추상 클래스이므로 Builder 클래스의 인스턴스가 인수로 주어지지는 않습니다. 생성자에 직접 전달되는 것은 추후 설명할 Builder 클래스의 하위 클래스의 인스턴스입니다.
+
+```java
+public class TextBuilder extends Builder {
+    private StringBuilder sb = new StringBuilder();
+
+    @Override
+    public void makeTitle(String title) {
+        sb.append("==================================\n");
+        sb.append("[");
+        sb.append("title");
+        sb.append("]\n\n");
+    }
+
+    @Override
+    public void makeString(String str) {
+        sb.append("■");
+        sb.append(str);
+        sb.append("\n\n");
+    }
+
+    @Override
+    public void makeItems(String[] items) {
+        for(String s : items) {
+            sb.append(".");
+            sb.append(s);
+            sb.append("\n);
+        }
+        sb.append("\n");
+    }
+
+    @Override
+    public void close() {
+        sb.append("==================================\n");
+    }
+
+    public String getTextResult() {
+        return sb.toString();
+    }
+}
+```
+
+Builder 클래스를 통해 TextBuilder 를 만든 예시입니다. 일반 텍스트들을 조합하여 문서를 구축한 후 String 으로 결과를 반환합니다.
+
+```java
+public class HTMLBuilder extends Builder {
+    private String filename = "untitled.html";
+    private StringBuilder sb = new StringBuilder();
+
+    @Override
+    public void makeTitle(String title) {
+        filename = title + ".html";
+        sb.append("<!DOCTYPE html>/n");
+        sb.append("<html/>\n");
+        sb.append("<head><title>");
+        sb.append(title);
+        sb.append("<title/><head/>");
+        sb.append("<body>\n");
+        sb.append("<h1>");
+        sb.append(title);
+        sb.append("<h1/>\n\n");
+    }
+
+    @Override
+    public void makeString(String str) {
+        sb.append("<p>");
+        sb.append(str);
+        sb.append("<p/>\n\n");
+    }
+
+    @Override
+    public void makeItems(String[] items) {
+        sb.append("<ul>\n");
+        for(String s : items) {
+            sb.append("<li>");
+            sb.append(s);
+            sb.append("<li/>\n");
+        }
+        sb.append("<ul/>\n\n");
+    }
+
+    @Override
+    public void close() {
+        sb.append("<body/>");
+        sb.append("<html/>\n");
+        try {
+            Writer writer = new FileWriter(filename);
+            write.write(sb.toString());
+            writer.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String getHTMLResult() {
+        return filename;
+    }
+}
+```
+
+HTMLBuilder 는 입력받은 데이터 기반으로 HTML 문서를 작성하여 리턴하는 클래스입니다.
+
+```java
+
+public class Main {
+    public static void main(String[] args) {
+        if(args.length !- 1) {
+            useage();
+            System.exit(0);
+        }
+    }
+
+    if(args[0].equals("text")) {
+        TextBuilder textbuilder = new TextBuilder();
+        Director director = new Director(textbuilder);
+        director.construct();
+        String result = textbuilder.getTextResult();
+        System.out.println(result);
+    } else if (args[0].equals("html")) {
+        HTMLBuilder htmlbuilder = new HTMLBuilder();
+        Director director = new Director(htmlbuilder);
+        director.construct();
+        String filename = htmlbuilder.getHTMLResult();
+        System.out.println("HTML 파일 " + filename + "이 작성되었습니다.");
+    } else {
+        useage();
+        System.exit(0);
+    }
+
+    public static void useage() {
+        System.out.println("Useage : java Main text     텍스트로 문서 작성");
+        System.out.println("Useage : java Main html     HTML 파일로 문서 작성");
+    }
+}
+```
+
+# Builder 패턴의 등장인물
+
+- Builder
+  - 인스턴스를 생성하기 위한 인터페이스를 결정합니다.
+  - Builder 역할에는 인스턴스의 각 부분을 만드는 메소드가 준비됩니다.
+- ConcreteBuilder
+  - Builder의 인터페이스를 구현하는 클래스입니다.
+  - 인스턴스 생성으로 호출되는 메소드가 정의되고 완성된 결과를 얻는 메소드가 준비됩니다.
+  - TextBuilder와 HTMLBuilder가 이 역할을 맡았습니다.
+- Director
+  - Builder의 인터페이스를 사용하여 인스턴스를 생성합니다.
+  - ConcreteBuilder 역에 의존하는 프로그래밍을 하지 않습니다.
+  - ConcreteBuilder 가 무엇이든 잘 작동하도록 Builder의 메소드만 사용합니다.
+- Client
+  - Builder 패턴을 사용합니다.
+
+# 누가 무엇을 알고 있는가?
+
+객체지향 프로그래밍에서는 '누가 무엇을 알고 있는지.' 가 매우 중요하다고 합니다. 어느 클래스가 어느 메소드를 사용할 수 있는지에 주의하여 프로그래밍 할 필요가 있습니다.
+
+예제에서 Main 클래스는 Builder 클래스의 메소드를 모르고 오직 Director 클래스의 construct 메소드만 호출합니다. Director 클래스는 Builder 클래스를 알고 있지만, 실제로 사용하고 있는 클래스가 실제로 TextBuilder 인지, HTMLBuilder인지 알 수 없습니다.
+
+이런 특징은 클래스 간에 교체 가능성을 높혀줍니다. 즉 서로 의존하고 있지만 결합하고 있지는 않다는 의미입니다.
+
+# DI
+
+Spring 을 자주 사용하신다면 Dependency Injection 에 대해 들어 보셨을 것입니다. DI를 쉽게 풀어서 설명하자면 _'소스 코드에는 없지만 실제로는 이 인스턴스를 이용해 동작 해주세요.'_ 라는 의미를 담아 인스턴스를 전달하는 방법을 의미합니다.
+
+```kotlin
+@Component
+class TestClass(
+    private val testRepository : TestRepository
+) {
+    /**
+    * 이하 생략
+    */
+}
+
+```
+
+Spring 애플리케이션 개발 과정에서 위와 같은 코드를 자주 보셨을 것입니다. 실제로 완전히 새로운 인스턴스가 생성되는 게 아니라 @Bean 으로 등록 된 싱글톤 인스턴스가 주입되죠.
+
+DI는 코드 간의 결합도를 낮추고 프로그램의 재사용성을 높혀줍니다. 정확히 구체적으로 무엇을 사용해야 하는지에 대해서는 사용하기 직전에 결정이 되는 샘이죠.
+
+예시에서 Builder 를 사용한다는 것은 고정이지만 TextBuilder 나 HTMLBuilder의 사용은 유동적으로 분리되어있습니다.
+
+# 실무에서 마주한 Builder 패턴
+
+보통 Spring에서는 `@Builder` 어노테이션을 선언 함으로써 해당 클래스에 적절한 Builder 클래스를 자동으로 생성하는 방향으로 개발합니다. 책에서 나와있듯이 Builder라는 클래스는 세상의 모든 클래스를 아우를 수는 없습니다. Builder 클래스 하위에 현재는 TextBuilder와 HTMLBuilder 만이 존재하지만 또 다른 형태의 문서에 대한 Builder가 만들어진다면 최악의 경우에는 새로운 Builder 클래스를 개발해야 할 수 있습니다.
+
+`Lombok` 의 `@Builder` 어노테이션은 아주 자주쓰이고 많이 사용되지만, 사실은 앞서 말씀드렸듯이 매 경우마다 코드를 자동으로 생성해주고 이를 감춤으로써 사용자에게 편리함을 주는 구조입니다.
+
+최근에 `Kotlin`을 사용해서 Spring 애플리케이션 개발을 진행중입니다. Kotlin Spring의 큰 특징은 `Lombok`을 사용 할 필요가 없다는 것이죠. Kotlin 의 언어 설계 특성 상 getter와 setter를 배제하고 불필요한 생성자들에 대한 코드 작성이 필요없는 `data class`를 지원합니다.
+
+```kotlin
+data class Test (
+    val name : String = "",
+    val value : Int = 0,
+    val content : String = ""
+)
+```
+
+이렇게 Default 값이 정해져있는 Data class Test의 경우엔 인스턴스 생성 과정에서 반드시 해당 데이터가 전달 되지 않아도 됩니다.
+
+```kotlin
+val test : Test = Test(
+    name = "이름",
+    value = 4
+)
+```
+
+사실 Lombok 없이 Java로만 Spring 애플리케이션을 개발한다면 수 많은 Getter / Setter, 그리고 Builder 코드를 작성해야겠지요. 최소한 특정 인스턴스에 대한 Builder는 필요 없습니다.
