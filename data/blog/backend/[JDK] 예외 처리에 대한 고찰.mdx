@@ -1,0 +1,101 @@
+---
+title: '[JVM] 예외 처리에 대한 고찰'
+date: '2024-02-03'
+lastmod: '2024-02-03'
+tags: ['Spring', 'Backend', 'JVM', 'Operation']
+draft: false
+summary: 이번생에 운영은 처음이라....주니어 개발자의 JDK 예외처리에 대한 고찰
+---
+
+# Intro
+
+신규 백엔드 애플리케이션을 릴리즈 한 지 2주에서 3주 정도 지난 동안 APM 을 바라보다 보면 여러가지 고민들이 들었습니다.
+
+지금까지 개발 해 왔던 애플리케이션들은 오랬동안 운영 할 것을 감안하지 않았습니다(부끄럽게도). 이번에 배포한 백엔드 애플리케이션은 오랫동안 유지보수 할 것을 감안하고 개발해야 했습니다.
+
+실제로 서비스를 배포하고 기능 상에 문제는 없지만 운영 상에 문제가 생기는 경우가 생겼고 부득이하게 긴급 패치를 해야 하는 경우가 생겼습니다.
+
+이번 포스팅에서는 JVM 기반 서비스의 예외처리에 대해 고민했던 기록들과 결과물들을 공유 해 보겠습니다.
+
+# 예외와 에러의 차이?
+
+예외는 말 그대로 로직 상에서 `예외` 로 간주해야 하는 상황을 말합니다. 이러한 예외는 로직 상에서 실수로 인해 발생할 수 있고 특정 경우에 예외로 간주해서 흘려 보내야 할 수도 있습니다.
+
+하지만 에러는 시스템이 종료되어야 할 수준의 심각한 오류를 의미하며 이는 개발자가 핸들링 할 수 없습니다.
+
+이번 포스팅에서는 예외에 대해서만 다룹니다.
+
+# Checked Exception VS UnChecked Exception
+
+차이는 컴파일 시점에서 예외를 catch 하는 지 확인하는 것 입니다. UnChecked Exception 은 컴파일 시점에 예외에 대해 처리하는 지 (catch) 여부를 확인하지 않습니다.
+
+즉 컴파일 시점에서 예외가 발생하는 지 여부를 판단하지 않습니다. 예외 처리를 강제하지 않습니다.
+
+`UnChecked Exception` 의 대표적인 예시는 `Runtime Exception` 입니다. JVM 의 정상적인 작동 중에 발생할 수 있는 예외를 의미합니다. Runtime Exception 하위에는 `ArrayIndexOutOfBoundsException`, `NullPointerException` 이 있습니다.
+
+`Checked Exception` 는 `Runtime Exception` 의 하위클래스들을 제외한 나머지 `Exception` 클래스의 하위 클래스들입니다.
+
+# REST API Exception
+
+Spring 백엔드 애플리케이션을 개발하다보면 국룰 처럼 작성하는 컴포넌트가 있는데 바로 `@RestControllerAdvice` 입니다. RestController 부터 하위까지 발생한 에러들을 핸들링 하는 역할을 합니다.
+
+정상적으로 전달 되어 Controller 영역 까지 전달 된 요청들에 대한 예외들은 `@RestControllerAdvice` 에 전달 됩니다. 즉 서비스 운영 상에서 처리되는 예외들은 거의 대부분 이 핸들러를 통한다는 의미입니다.
+
+어떻게 개발하느냐에 따라 다르지만 대부분 처리하고자 하는 예외에 대한 메소드들을 작성 할 것입니다. 마치 아래와 같이 말이죠.
+
+```kotlin
+@ExceptionHandler(value = [IllegalArgumentException::class])
+fun handleIllegalArgument(e : IllegalArgumentException) : ResponseEntity<Any> {
+    handleInternalException(exception = e, responseCode = ResponseCode.INVALID_PARAMETER)
+}
+```
+
+여기 까지는 대부분이 비슷하게 작업 했을 것입니다.
+
+# 공용 Exception 클래스를 쓰다 보면 생기는 일
+
+많은 예시 프로그램에서 볼 수 있다시피 저 또한 공용으로 처리할 수 있는 Exception 을 하나 배치하는 편입니다.
+
+```kotlin
+class GeneralException(
+    val responseCode : ResponseCode,
+    val errorMsg : String? = null,
+    // 에러 상황에서 데이터를 리턴해야 하는 케이스에서 사용합니다.
+    val errorData : Any? = null
+) : RuntimeException(errorMsg ?: responseCode.userMessage)
+```
+
+```kotlin
+val user = userRepository.find(id = id) ?: throw GeneralException(ResponseCode.USER_NOT_FOUND)
+```
+
+정말 군더더기 없어 보입니다. 이런 `GeneralException` 덕분에 우리는 예외처리를 할 때 아주 편하게 작업할 수 있습니다. `@RestControllerAdvice` 에는 `GeneralException` 을 처리하는 `@ExceptionHandler` 하나만 배치하면 편리하죠. 예외를 던지고 싶다면 Controller 레이어 하위에서 맘껏 던지면 됩니다.
+
+근데 과연 이게 최선일까요? 예외를 던지고 있는 코드에서 문제점을 찾아 봅시다.
+
+## 너무나 과도한 GeneralException 의 책임
+
+우리의 스프링 애플리케이션에서는 수 많은 엔티티 클래스가 존재합니다. 도메인 하위에는 수 많은 도메인이 있을 수 있고 각 도메인 별 엔티티들의 구조는 개발하기 나름이지만, 최소한 User 하나만 존재 하지는 않을 것입니다.
+
+우리는 GeneralException 을 사용 함으로써 그에 대한 수 많은 ResponseCode 들을 작성해야 할 수 있습니다.
+
+- 유저를 찾을 수 없습니다
+- 상품을 찾을 수 없습니다
+- .......
+
+```kotlin
+enum class ResponseCode(val httpStatus : HttpStatus, val code : String, val message : String) {
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "404001", "유저를 찾을 수 없습니다."),
+    PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "404002", "상품을 찾을 수 없습니다.")
+}
+```
+
+사실 이전에는 이런 식으로 많이 개발했으나 대부분의 그런 식의 프로젝트들은 실제 운영에서 쓰인 적이 손에 꼽습니다. 즉 1회성 프로젝트에서는 이런 방법을 쓰더라도 큰 문제가 없었습니다.
+
+제가 참여하고 있는 서비스는 꽤 오랜시간 시장에 나와 운영 되던 서비스였습니다. 이런 식으로 ResponseCode 를 관리했다간 언젠가 ResponseCode의 채번이 불가능 해 질 정도로 많아질 수 있습니다.
+
+물론 ResponseCode 를 하나로 고정하고 메시지만 다르게 던지는 것도 방법이기는 하지만 결국 어딘가에 에러 메시지를 작성 해 두어야 합니다. 에러 메시지로 전달되는 메시지를 Service나 Controller 영역에 하드코딩하는 것은 권장되지 않습니다. 여러 메소드에서 해당 메시지를 쓸 수도 있기 때문입니다.
+
+또한 Frontend 입장에서는 메시지로 요청을 인식하는 것 보다 코드로 인식하는 게 빠릅니다. HttpStatus 를 확인하고 그 다음 코드를 확인해서 팝업을 띄우거나 흘려보내는 방식으로 핸들링 로직을 작성하게 되겠죠.
+
+계속해서 매 오류마다 오류코드를 무분별하게 처리하는 것 보다는 차라리 겹치는 성격의 에러는 코드를 고정하고 메시지만 다르게 처리하는 것도 방법이
