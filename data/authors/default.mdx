@@ -21,7 +21,7 @@ linkedin: https://www.linkedin.com/in/woojin-son-18989b202
 ## Skills
 
 - `Language` : Java, Kotlin, Javascript(Typescript), Python
-- `BackEnd` : Spring Framework, Express.js
+- `BackEnd` : Spring Framework, Express.js, Nest.js
 - `Database` : MySQL(MariaDB), PostgreSQL, MongoDB
 - `Messaging` : Apache Kafka
 - `FrontEnd` : Next.js (React.js)
@@ -32,15 +32,63 @@ linkedin: https://www.linkedin.com/in/woojin-son-18989b202
 
 ### Danal (2023.08 ~ ing)
 
-R&D 혁신본부 다모음 사업팀 BackEnd, DevOps 엔지니어
+R&D 혁신본부 다모음 사업팀 웹 개발자
 
-#### 다모음 Application API 서버 개발
+#### 다모음 캐시 일괄 지급 배치 서비스 개발
+
+> 2024.06 ~ ing 
+
+##### Description
+
+운영 업무 생산성 향상 프로젝트의 첫 번째. Spring Batch 애플리케이션과 백오피스 간 연동을 통한 업무 자동화 프로젝트
+
+##### Tech Stack
+
+`SpringBatch`, `Spring Boot`, `Vue.js`
+
+##### What I did
+
+- Frontend
+  - 다모음캐시 지급 관리 페이지 개발
+    - 일괄 지급 및 지급 취소 페이지 설계 및 개발
+
+- Backend
+  - 다모음캐시 일괄 지급, 지급 취소 로직 설계 및 개발
+    - REST API 서버와 Batch 서버 간 이벤트 연동
+    - Spring Batch Job, Step 로직 구현
+
+#### 다모음 백오피스 2차 리뉴얼 프로젝트
+
+> 2024.05 ~ 2024.06 
+
+##### Description
+
+다모음 백오피스 MaterialUI 전환
+
+##### Tech Stack
+
+`SpringBoot`, `Typescript`, `Vue.js`, `MaterialUI`, `Tanstack Query`
+
+##### What I did
+
+- Frontend 프로젝트 디렉토리 구조 개선
+  - Feature Sliced Design 도입을 통한 디렉토리 컨벤션 정립
+    - AS-IS 에 비해 코드간의 결합도 감소 효과 (계층 간 책임분리)
+    - 간소화 된 Import Path 로 인한 코드 가독성 향상 효과
+- MaterialUI 도입
+  - 기획 -> 디자인 -> 퍼블리싱 -> 개발 로 이어지던 백오피스 개발 업무 체계를 기획 -> 개발 로 간소화
+  - 프로젝트 사이클의 Time Interval 감소 효과, 생산성 향상 효과
+- Tanstack Query 도입 (Server Side 상태관리 도입)
+  - 요청 빈도수 감소 효과 (키값 구독 방식, 같은 데이터를 바라보는 컴포넌트들은 오직 한번의 패칭으로 데이터 공유)
+
+
+#### 다모음 Application 리뉴얼 프로젝트 REST API 서버 개발
 
 > 2023.11 ~ ing
 
 ##### Description
 
-다모음 Application 신규기능 API 개발 담당
+다모음 Application 신규기능 백엔드 개발 담당
 
 ##### Tech Stack
 
@@ -48,7 +96,7 @@ R&D 혁신본부 다모음 사업팀 BackEnd, DevOps 엔지니어
 
 ##### What I did
 
-- 다모음캐시 충전 기능 마이그레이션 (2024.01 ~ ing)
+- 다모음캐시 충전 기능 마이그레이션 (2024.01 ~ 2024.04)
 
   - 로컬 테스트 환경 개선
     - 폐쇄망에서 제한적인 OpenAPI 개발 환경 개선 (Apache Server 활용 Proxy 셋업)
@@ -61,9 +109,6 @@ R&D 혁신본부 다모음 사업팀 BackEnd, DevOps 엔지니어
     - 전략패턴을 통한 기능 별 코드 간 결합도 개선
 
 - 한도상향, 자동충전 개발 프로젝트 (2023.11 ~ 2024.01)
-
-  - [관련기사1](https://news.mt.co.kr/mtview.php?no=2024012410010811262)
-  - [관련기사2](https://www.g-enews.com/ko-kr/news/article/news_all/2024042114021860773b60030fa2_1/article.html)
 
   - 테스트 자동화 도입 및 테스트 코드 작성
   - 폐쇄망 환경에서 제한적이었던 테스트 환경 개선
@@ -110,15 +155,13 @@ Spring Security 셋업 및 상담 백엔드 개발
   - 상담 서비스 백엔드 개발
     - 상담 통계 API 개발
     - 다중 카테고리 검색 기능 구현
+  - Scouter 활용 시스템 및 서비스 모니터링
+  - Maven 통합 빌드 코드 작성 (BE, FE 단일 jar 파일로 빌드) → 배포 편의성 향상
 - Frontend
   - Vue.js 전환 및 프론트엔드 개발 담당
     - 기존 백오피스 선례 JQuery 에서 Vue.js 로 개발 방향성 전환
     - SPA 도입으로 인한 랜더링 성능 향상에 기여
     - Pinia 를 통한 상태관리 도입, 생산성 향상 및 팀 FE 개발 컨벤션 정립에 기여
-- DevOps
-  - Scouter 활용 시스템 및 서비스 모니터링
-    - 메신저 프로그램에 Alert 전달, ChatOps 구축
-  - Maven 통합 빌드 코드 작성 (BE, FE 단일 jar 파일로 빌드) → 배포 편의성 향상
 
 ---
 
