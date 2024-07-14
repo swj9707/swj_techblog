@@ -1,0 +1,196 @@
+---
+title: '[Spring] Spring AOP 개념 정리'
+date: '2024-07-14'
+lastmod: '2024-07-14'
+tags: ['Spring', 'Backend', 'Study']
+draft: false
+summary: Spring AOP 개념, 특징, 생성 방식에 대한 정리
+---
+
+# Intro
+
+Spring 에서 AOP 는 상당히 중요합니다. Spring 을 처음 배울 때 학부 때의 지식과 많은 갭을 느꼈던 파트 중 하나였습니다.
+
+이번 포스팅에서는 Spring 에서 매우 중요한 개념인 AOP 에 대해 정리 해 보겠습니다.
+
+# Spring AOP 란?
+
+Aspect Oriented Programming (관점 지향 프로그래밍) 이란, 핵심 관심사 (Core Concerns) 와 횡단 관심사 (Cross cutting Concerns) 를 분리하여 가독성과 모듈성을 증진시키는 데 목적을 둔 방법입니다.
+
+애플리케이션을 개발할 때 1차적으로 집중하는 것은 아마도 로직 일 것입니다. 유저를 로그인 시키거나 데이터를 가공해서 전달 해 주는 등 대부분의 개발자들은 `비즈니스 로직` 에 1차적으로 집중 할 것입니다.
+
+그럼 이 1차적으로 집중하는 로직 외에는 어떤 게 있을까요? 아마도 트랜잭션 관리나 로깅 등 비즈니스 로직과는 별개지만 없어서는 서비스가 제공되기 어려운 기능 들입니다.
+
+앞서 포스팅에서 트랜잭션에 대해 이야기 한 적 있습니다. Spring Transaction 은 AOP 와 긴밀한 관계가 있지요. AOP 없이 트랜잭션 관리 기능을 구현하려면, 매 서비스 로직 마다 Transaction Manager 를 불러와야 할 것입니다.
+
+개발을 하다보면 수 많은 보일러 플레이트 코드들을 마주하게 됩니다. 우리는 1차적으로 집중하고 싶은 비즈니스 로직에 에너지를 쏟고 싶어합니다. Spring AOP 는 이런 면에서 이점을 가져다 줍니다.
+
+AOP 는 관점을 중심으로 모듈화를 시키고자 합니다. 모듈화는 공통된 로직이나 기능을 하나의 단위로 묶는 것을 의미합니다.
+
+> 공통 코드는 최대한 지양하는 게 좋습니다. 이런 보일러플레이트들을 줄일 수록 우리는 비즈니스 로직에 집중할 수 있는 시간이 늘어납니다.
+
+데이터베이스 연결, 로깅 등의 부가적인 관점들은 Aspect 기능으로 모듈화 할 수 있고 비즈니스 로직들에서 이러한 관점들을 바라보게 함으로써 코드를 재사용 할 수 있습니다.
+
+Service 레이어에서 실행되는 메소드들의 성공, 실패 여부에 대한 로깅을 하고 싶다고 가정 해 보겠습니다. 아무런 장치 없이 해당 기능을 구현하려면 아래와 같이 작업해야 할 것입니다.
+
+```kotlin
+@Service
+class TestService {
+	private val log = getLogger()
+
+	fun testLogic(param : Int) : Int{
+		log.info("testLogic Start => Param : $param")
+		//Do Something
+		val result = resultFactory.getResult()
+		log.info("testLogic End => Result : $result")
+		return result
+	}
+}
+```
+
+한 두번이야 괜찮겠지만, 우리가 매번 이렇게 코드를 작성할 수 있을까요? 아마 모두가 원하지 않는 그림 일 것이라 생각합니다.
+
+Spring AOP 를 활용하면 이러한 문제들을 해결할 수 있습니다.
+
+# 주요 개념 설명
+
+![Aop 개념 시각화](https://www.baeldung.com/wp-content/uploads/2017/11/Program_Execution.jpg)
+
+- Aspect
+  - 흩어진 관심사를 모듈화 한 것을 의미합니다.
+  - JoinPoint, Advice를 결합 한 객체를 의미합니다.
+  - 관심사의 로직, 그리고 해당 로직이 수행 될 시점을 결합 하여 모듈화 한 객체를 의미합니다.
+- Target
+  - Aspect 를 적용하는 곳을 의미합니다.
+- Advice
+  - 어떤 일을 해야 할 지에 대한 기능들을 담은 `구현체(class)` 입니다.
+- JointPoint
+  - Advice 가 적용 될 위치를 의미합니다.
+  - 메소드 진입, 생성자 호출, 필드에서 값을 꺼내올 때 등 다양한 시점에서 적용이 가능합니다.
+  - `before`, `after-throwing`, `after`, `around` 등의 시점을 직접 지정해줄 수 있습니다.
+- PointCut
+  - JointPoint 의 상세한 스펙을 정의한 것을 의미합니다.
+  - 표현식들로 특정한 대상(클래스, 메소드 )을 지정할 수 있습니다.
+- Advisor
+  - Advice 와 Pointcut 을 합친 객체 입니다.
+  - 추가 할 부가기능과 부가기능을 적용 할 대상을 모두 알고 있는 객체 입니다.
+
+# Spring AOP 의 특징
+
+Spring은 proxy 패턴 기반의 AOP 구현체를 사용합니다. proxy를 사용하는 이유는 실질적인 Target과 Aspect에 접근하기 위한 중간다리가 필요하기 때문입니다.
+
+AOP 코드의 예시를 하나 살펴보겠습니다. AOP 클래스 또한 Spring IoC의 영향을 받으므로 `@Component` 어노테이션을 붙혀서 Spring Bean으로 등록 해 주어야 합니다.
+
+```kotlin
+@Component
+@Aspect
+class TestAspect {
+	@PointCut("execution(* com.test.*.TestService.*(..))")
+	fun cut() {}
+
+	@Before("cut()")
+	fun before(joinPoint : JoinPoint) {
+		//Do Something
+	}
+}
+
+```
+
+`@PointCut`을 통해 JoinPoint를 지정하였고, `@Before`를 통해 해당 메소드들의 진입 이전 시점의 로직을 작성하였습니다.
+
+문제는 이것 만으로는 TestAspect 가 할 수 있는 게 아무것도 없다는 것입니다. 이 클래스에는 `@Aspect` 와 `joinPoint` 만 지정 되어있고 실제 Target과의 연결이 전혀 없습니다.
+
+이 역할을 Proxy 클래스가 대신 해줍니다. Proxy 패턴은 요청 처리의 중간 단계에서 원본 객체를 대신해서 작업을 처리하도록 하는 패턴입니다. Proxy 객체는 원본 객체와 같은 인터페이스를 가지고 있기 때문에 사용하는 입장에서는 원본을 사용하는 것과 같은 효과를 가질 수 있습니다. 이러한 Proxy를 쓰는 이유를 생각 해 보면 원본 객체 그 자체에 대한 접근을 제어하기 위해서, 그리고 부가적인 기능을 제어하기 위해서라고 할 수 있습니다.
+
+> _원본 객체의 메소드에 접근하기 전에 권한에 대한 검사를 한다거나 로그를 남기는 등의 역할을 Proxy가 대신 해 줄 수 있습니다. 원본 객체는 원래 원본이 가지고 있던 책임만 다 하면 되죠._
+
+Spring AOP 에서도 마찬가지입니다. 원본 객체에 대한 코드 수정은 배제하고, Proxy를 통해 부가적인 처리를 추가하고자 하기 위해 Proxy 객체를 사용합니다.
+
+앞서 말씀드렸듯이 AOP를 도입하는 이유는 비즈니스 로직과는 다른 부가적인 기능들에 대한 모듈화 입니다. 우리는 원본 객체 (Service 컴포넌트 등) 에 이러한 부가적인 기능들을 추가하기 위해 코드를 수정하는 것을 바라지 않습니다.
+
+그래서 Spring 에서는 AOP 구현체를 생성할 때 Proxy 형태로 생성하게 됩니다. Target을 감싸고 있는 형태고, 우리가 지정한 부가적인 처리들이 Target Method 를 실행하기 전에 우리가 설정한 옵션 값에 따라 호출됩니다.
+
+즉, Spring AOP 는 Proxy 를 통해 원본의 코드를 전혀 수정하지 않고 부가적인 기능들을 구현하도록 도와줍니다. AOP 의 영향권에 있는 컴포넌트 마다 똑같이 코드를 수정하는 게 아니라, Proxy를 통해 실제 기능이 호출되기 전 AOP 의 로직이 작동하는 것입니다.
+
+![Proxy패턴](https://miro.medium.com/v2/resize:fit:640/format:webp/1*rKCOCyxJHYjkfo_2iDhQKg.jpeg)
+
+# 스프링에서 Proxy 인스턴스를 생성하는 방법
+
+Spring AOP 는 앞서 말씀드렸듯이 Proxy 패턴을 기초로 합니다. 많은 블로그 글에서 찾아볼 수 있겠지만 Spring은 두 가지 방법의 Proxy 인스턴스 생성 방식을 지원합니다.
+
+![spring-proxy-method](https://miro.medium.com/v2/resize:fit:720/format:webp/1*3AlJP4bvBWAfGD-XNrtzpw.jpeg)
+
+- JDK Dynamic Proxy
+  - Target Object 가 인터페이스 기반으로 생성 되었을 때 주로 사용합니다.
+- CGLib Proxy
+  - 만약 Target Object 가 인터페이스 기반으로 개발 되어있지 않은 경우 해당 오브젝트의 바이트 코드를 조작하여 Proxy를 생성합니다.
+
+실제로 Proxy 를 통해 AOP 가 작동하는 과정을 코드로 이해 해 보겠습니다.
+
+```kotlin
+class TestServiceImpl : TestService {
+	private val log = getLogger()
+
+	fun method1() {
+		method2()
+	}
+
+	fun method2() {
+		log.info("Self call 예시")
+	}
+}
+
+fun main() {
+	val testService = TestServiceImpl()
+	testService.method1()
+}
+
+```
+
+Proxy 를 따로 사용하지 않고 직접 인스턴스를 생성해서 메소드를 호출 한 상황입니다. 어렵 게 이해할 것도 없이, 직접 인스턴스가 가지고 있는 원본 메소드를 호출 합니다.
+
+```kotlin
+class TestServiceImpl : TestService {
+	private val log = getLogger()
+
+	fun method1() {
+		method2()
+	}
+
+	fun method2() {
+		log.info("Proxy 예시")
+	}
+}
+
+fun main() {
+	val factory = ProxyFactory(TestServiceImpl())
+	factory.addInterface(TestService::class)
+	factory.addAdvice(TestAdvice())
+	val testService = factory.getProxy() as TestService
+	testService.method1()
+}
+
+```
+
+아까완 다르게 직접 인스턴스를 생성하는 게 아니라 ProxyFactory를 통해 생성 하였습니다. 이 과정에서 사용 할 Proxy 인스턴스의 사양을 지정해줄 수 있습니다.
+
+```kotlin
+val proxyFactory = ProxyFactory()
+proxyFactory.addInterface(TestService::class)
+proxyFactory.addAdvice(advice)
+proxyFactory.addAdvisor(advisor)
+```
+
+어떤 오브젝트를 Target으로 둘 것인지, 어떤 부가기능들을 추가 할 것인지를 proxyFactory에 등록한 후, getProxy 메소드를 호출하면 원본을 참조하는 Proxy 인스턴스가 생성됩니다.
+
+물론 우리가 이 모든 코드들을 직접 다 작성 할 필요는 없고, 우리가 @Transactional 과 같은 어노테이션을 컴포넌트에 사용하거나 @Aspect 컴포넌트에 부가 로직들을 작성하면, Spring 에서 컴포넌트 인스턴스들을 생성할 때 해당 어노테이션을 참조해서 AOP Proxy를 생성하게 됩니다.
+
+# Outro
+
+지금까지 Spring AOP 의 목적과 개념, 용어, 생성 방식에 대해 정리 해 보았습니다.
+AOP 에 대해 다시 정리 해 보면서 Proxy 패턴에 대해 얼마나 이해하고 쓰고 있었는 지 스스로 돌아볼 수 있었습니다.
+
+# Reference
+
+https://huisam.tistory.com/entry/springAOP
+https://blog.devgenius.io/demystifying-proxy-in-spring-3ab536046b11
