@@ -1,0 +1,255 @@
+---
+title: '🤿 숨 꾹 참고 딥다이브 4 : 숨 꾹참고 딥다이브 - JPA 원리편'
+date: '2025-11-16'
+lastmod: '2025-11-16'
+tags: ['Programming', 'Backend', 'Study']
+draft: false
+summary: 숨 꾹참고 딥다이브 시리즈 네 번째! JPA 는 어떤 과정을 통해 DB 에게 요청을 보낼까요?
+---
+
+# 숨 꾹참고 딥다이브 - JPA 원리편
+
+- [숨 꾹참고 딥다이브 - JPA 원리편](#숨-꾹참고-딥다이브---jpa-원리편)
+  - [Intro](#intro)
+  - [JPA 와 Hibernate 의 관계 다시 리마인드 하기](#jpa-와-hibernate-의-관계-다시-리마인드-하기)
+  - [엔티티 매니저 (EntityManager) - JPA 의 심장](#엔티티-매니저-entitymanager---jpa-의-심장)
+  - [영속성 컨텍스트 (Persistence Context)](#영속성-컨텍스트-persistence-context)
+  - [flush - SQL 이 실제로 나가는 순간](#flush---sql-이-실제로-나가는-순간)
+  - [Dirty Checking - Hibernate 의 그림자](#dirty-checking---hibernate-의-그림자)
+  - [JPQL 과 SQL 의 만남](#jpql-과-sql-의-만남)
+    - [Tip! N+1 문제](#tip-n1-문제)
+  - [Spring Data JPA - EntityManager 의 자동화](#spring-data-jpa---entitymanager-의-자동화)
+  - [요약 : JPA 를 이해하기 위한 핵심 정리](#요약--jpa-를-이해하기-위한-핵심-정리)
+  - [마치며](#마치며)
+
+## Intro
+
+다시 돌아왔습니다. 이번 포스팅에서는 JPA 의 원리를 한번 딥하게 파 보도록 하겠습니다.
+
+사실 JPA 의 원리를 딥하게 판다는 말 자체가 조금은 이상할 수 있습니다. JPA 그 자체는 인터페이스 명세일 뿐이니까요.
+
+여기서 말하는 원리는 `Spring Data JPA` 의 동작 원리, 설계 철학에 대한 이야기라고 이해해주시면 감사하겠습니다. 'Spring Data JPA 와 Hibernate 구현체가 어떻게 맞 물리는지?' 라는 주제로 생각 해 주시면 될 것 같아요.
+
+> Spring 에 입문한 시점에서 정말 이해가 어렵고 적응이 어려웠던 것 중 하나가 `JpaRepository` 였습니다.
+>
+> 개발자가 직접 컨트롤하지 않는 프레임워크의 영역으로 CRUD 작업이 처리되는 게 편하긴 하지만...막상 에러가 발생했을 때 문제를 처리하려면 동작 원리를 잘 알아야 했죠.
+>
+> Spring 으로 앱을 개발하고 운영하는 단계에서는 _더이상 입문이 아니기 때문에_ 특히 원리 이해도가 중요해집니다.
+
+이번 포스팅에서는 JPA 에서 원리라고 다룰 수 있는 것들은 최대한 다뤄보려고 합니다.
+
+☕ 커피 한잔과 함께 즐겨주세요. 이번에도 깊게 딥다이브 해 보겠습니다.
+
+## JPA 와 Hibernate 의 관계 다시 리마인드 하기
+
+JPA (Java Persistence API) 는 ORM (Object Relational Mapping) 을 위한 인터페이스 명세고, Hibernate 는 JPA 명세를 구현한 대표적인 구현체 (Implementation) 입니다.
+
+Spring Data JPA 는 Hibernate 를 JPA 로 감싼 추상화 계층 + Repository 자동 구현 라이브러리입니다.
+
+```text
+Application
+   ↓
+Spring Data JPA (Repository Layer)
+   ↓
+JPA Interface (EntityManager, EntityTransaction 등)
+   ↓
+Hibernate (실제 구현체)
+   ↓
+JDBC Driver → Database
+```
+
+Spring Data JPA (Spring Boot Starter) 를 셋업하면 위와 같은 구조를 가지게 됩니다. 개발자는 Spring Data JPA 를 통해서 DB 커넥션을 셋업하고, 엔티티를 정의하죠.
+
+하지만 만약 여러 데이터베이스를 같이 연동해야한다면? JPA 의 EntityManager와 EntityTransaction 을 셋업해야 합니다. 조금 더 깊게 파고들어야 하는 시점이 오게 되죠.
+
+## 엔티티 매니저 (EntityManager) - JPA 의 심장
+
+엔티티 매니저 (`EntityManager`) 는 JPA 의 핵심 인터페이스입니다. 모든 DB 조작이 여기서부터 시작 되죠.  
+Spring Boot 에서는 `@PersistenceContext` 또는 `EntityManagerFactory` 를 통해 주입됩니다.
+
+```kotlin
+@Service
+class MemberService(
+    private val em: EntityManager
+) {
+    fun save(member: Member) {
+        em.persist(member)
+    }
+}
+```
+
+아마 `JpaRepository` 를 불러와서 CRUD 를 하는 게 대부분 익숙하실겁니다. 원리를 아는 게 목적이니 이번엔 직접 `EntityManager` 를 불러 와 보겠습니다.
+
+`persist` 메소드를 호출하는 데 있어서 네 가지 메커니즘이 동작하게 됩니다.
+
+- 엔티티를 영속성 컨텍스트에 등록 (1차 캐시 저장)
+- 스냅샷 생성 (변경 감지를 위한 원본 복사본 저장)
+- 트랜잭션 커밋 시점에 flush() 실행
+- JDBC batch insert 실행 후 DB 반영
+
+JPA 는 즉시 데이터를 DB 에 반영하지 않습니다. JDBC 로 call 을 하기 전에 데이터를 검증하는 과정을 거치죠. 이를 쓰기 지연 (Write-behind) 전략이라고 합니다.
+
+왜 이런 전략을 쓰게 되었을까요? 우리가 필요 할 때 마다 JDBC 에 CRUD 를 모두 태우게 된다면 하나의 비즈니스 로직에서 연속적으로 DB 서버에 Query 가 요청 됩니다. 이는 DB 서버에 부하를 일으킬 수 있죠.
+
+## 영속성 컨텍스트 (Persistence Context)
+
+영속성 컨텍스트는 엔티티의 생명주기를 관리하는 가상의 1차 캐시입니다.
+
+엔티티의 상태는 아래의 4가지 단계를 거칩니다.
+
+| 상태                   | 설명                                                  |
+| ---------------------- | ----------------------------------------------------- |
+| **비영속 (Transient)** | new로 생성했지만 아직 영속성 컨텍스트에 등록되지 않음 |
+| **영속 (Persistent)**  | `em.persist()`를 통해 등록됨 (1차 캐시에 저장)        |
+| **준영속 (Detached)**  | `em.detach()`, `em.clear()`, `em.close()`로 분리됨    |
+| **삭제 (Removed)**     | `em.remove()` 호출 시 삭제 예약 상태                  |
+
+만약에 하나의 정해진 트랜잭션 내에서 조회를 여러번 진행하는 상황이 생긴다고 가정 해보겠습니다.
+
+만약 1차 캐시가 없다면 우리는 DB 에 같은 데이터를 조회하는 쿼리를 여러번 보내야하는 상황에 놓입니다.
+
+앞서 말씀드렸다시피 JPA 는 쓰기 지연 전략을 채택하고 있습니다. 가능하면 하나의 트랜잭션이 확실히 끝난 시점에서 데이터를 업데이트 하는 게 좋겠죠.
+
+그렇다면 같은 엔티티를 조회할 때 1차 캐시에 두는 게 여러모로 유리합니다. 데이터의 변경이 감지되면 더티 체킹 `(Dirty Checking)` 기능이 동작하게 됩니다. 이 경우 `flush()` 메소드가 호출되는 시점에 update SQL 이 발생하게 되죠.
+
+```kotlin
+val member = em.find(Member::class.java, 1L)
+member.name = "Woojin"
+tx.commit() // flush() -> dirty checking -> update SQL 발생
+```
+
+더티 체킹 `(Dirty Checking)` 에 대해서는 추후 좀 더 자세히 다뤄보겠습니다.
+
+## flush - SQL 이 실제로 나가는 순간
+
+`flush` 는 영속성 컨텍스트의 변경 내용을 DB 에 직접 반영하는 과정입니다.
+
+`flush` 가 호출되는 트리거는 다음과 같습니다.
+
+| 플러시 트리거            | 설명                                             |
+| ------------------------ | ------------------------------------------------ |
+| **수동 flush() 호출 시** | 명시적으로 영속성 컨텍스트 반영                  |
+| **JPQL 실행 시**         | JPQL은 DB 상태를 기준으로 하므로 flush 먼저 실행 |
+| **트랜잭션 커밋 시**     | Spring이 내부적으로 flush 후 commit 수행         |
+
+commit 과 flush 는 다릅니다. flush 는 DB 반영 예약, commit 은 트랜잭션 완료라고 이해하시면 되겠습니다.
+
+## Dirty Checking - Hibernate 의 그림자
+
+Hibernate 은 엔티티를 `persist()` 할 때 스냅샷 (초기상태) 를 함께 저장합니다.
+
+이 후 트랜잭션이 커밋되는 시점에서 스냅샷과 현재 객체를 비교하여 변경점을 찾죠.
+
+```kotlin
+val member = em.find(Member::class.java, 1L)
+member.name = "DevCow"  // update SQL? ❌ 아직 아님
+tx.commit()             // flush() 실행 시 update SQL 생성 ✅
+```
+
+엔티티 객체의 필드 값이 변경 된 경우 우리는 JPA 가 알아서 Update 쿼리를 날린다고 이해하고 있습니다.
+
+사실은 JPA 는 `update` 메소드가 따로 존재하지 않습니다. 날아가는 쿼리에서는 `UPDATE` 로 날아갈 지도 모르지만요...
+
+## JPQL 과 SQL 의 만남
+
+아마 JPA 를 통해 동적 쿼리를 작성하다보면 한번 쯤은 만났을 지도 모르는 기능이 나타났습니다. 바로 `JPQL` 입니다.
+
+JPQL (Java Persistence Query Language) 는 엔티티 객체를 대상으로 한 쿼리입니다. Hibernate 가 이를 SQL 로 반환해서 JDBC 로 실행하죠.
+
+```kotlin
+val members = em.createQuery(
+    "select m from Member m where m.name = :name", Member::class.java
+)
+.setParameter("name", "Woojin")
+.resultList
+```
+
+```sql
+select member_id, name
+from member
+where name = ?
+```
+
+이로써 구조가 완성 되었습니다.
+
+JPA - Hibernate - JDBC 간의 연결관계에서 Spring Data JPA 를 통해 애플리케이션 영역의 비즈니스 로직 작성, Hibernate 를 통한 엔티티 및 트랜잭션 관리, 최종 JDBC 를 통한 쿼리 전달 구조를 한번 살펴보았습니다.
+
+### Tip! N+1 문제
+
+JPA 를 쓰다보면 한번 쯤은 하게 되는 실수죠. `N+1` 문제입니다.
+
+JPA 엔티티로 우리가 연관관계 매핑을 하는 경우가 있죠. 외래키를 통해 JOIN 해 올 수 있는 데이터를 쉽게 가져올 수 있지만...자칫 잘못 사용하다간 N+1 문제를 일으킬 수 있습니다.
+
+여기서 N + 1 문제를 한번 설명하고 넘어가자면, 연관관계 매핑이 되어있는 데이터를 조회할 때 1번의 초기 쿼리 외에 연관된 데이터 갯수 (N) 만큼 추가 쿼리가 발생하는 문제입니다.
+
+```kotlin
+val teams = em.createQuery("select t from Team t", Team::class.java).resultList
+teams.forEach { println(it.members.size) } // N+1 발생
+```
+
+예를 들어 팀에 소속된 멤버를 조회하고자 할 때, `select t form Team t` 외에 `select m from Member m` 을 N 번 하게 되는 샘이죠.
+
+사실 일반적으로 SQL 로 데이터를 조회해오는 상황에서는 보통 JOIN 쿼리 하나로 해결이 되어야 하는 상황이죠.
+
+이 문제는 `fetchJoin` 을 사용하면 해결할 수 있습니다.
+
+```sql
+select t from Team t join fetch t.members
+```
+
+`BatchSize` 옵션을 통해 이 문제를 회피할 수도 있지만...개인적으론 `fetchJoin` 만 잘 써도 실무에서 `N+1` 을 회피할 수 있었다고 생각합니다.
+
+> 아니면 그냥 연관관계 매핑을 쓰지 않고 모든 쿼리를 QueryDSL 로 작성하는 것도 방법이긴 합니다...
+
+## Spring Data JPA - EntityManager 의 자동화
+
+Spring Data JPA 는 내부적으로 다음을 수행합니다.
+
+```kotlin
+interface MemberRepository : JpaRepository<Member, Long>
+```
+
+앞서 예시에서는 `EntityManager` 를 직접 가져왔죠. 하지만 Spring Data JPA 를 사용하면 굳이 그럴 필요가 없습니다. 이렇게 필요한 엔티티에 대한 `Repository interface` 만 선언 해 주면 되죠.
+
+Spring Data JPA 는 내부적으로 이런 엔티티 Repository 에 대해 SimpleJpaRepository로 프록시를 구현합니다. 그러면 내부적으로 EntityManager를 주입받아 모든 CRUD 처리할 수 있게 됩니다.
+
+이 프록시를 통해 우리는 `findByXXX` 와 같은 쿼리 메소드를 사용할 수 있습니다. 동적 쿼리를 작성할 때 쓰는 `Specification` 기능도 사용할 수 있죠.
+
+> 개인적으론...Specification 보다는 QueryDSL 을 좀 더 선호하기는 합니다. 다만 QueryDSL 은 그 만큼 QClass 생성으로 인해 바이너리가 무거워질 수도 있습니다.
+
+즉, 우리가 직접 EntityManager를 다루지 않아도
+Spring이 트랜잭션 경계 내에서 영속성 컨텍스트를 자동 관리해줄 수 있습니다.
+
+## 요약 : JPA 를 이해하기 위한 핵심 정리
+
+지금까지 Spring Data JPA - Hibernate - JDBC 간의 연관성, 그리고 엔티티 클래스를 조회 해 오는 과정을 통해 JPA 의 동작 원리를 살펴 보았습니다.
+
+지금까지의 내용을 다섯줄로 요약 해 보겠습니다.
+
+1. JPA는 ORM 표준 인터페이스, Hibernate는 그 구현체 입니다.
+2. EntityManager가 영속성 컨텍스트를 관리합니다.
+3. flush는 커밋 전에 변경 내용을 DB에 반영하는 예약 명령 입니다.
+4. 더티 체킹은 스냅샷 기반 객체 변경 탐지 메커니즘 입니다.
+5. JPQL은 엔티티를 대상으로 하는 SQL 추상화 언어 입니다.
+
+## 마치며
+
+이번 포스팅에서는 JPA 의 작동 원리에 대해 알아보았습니다.
+
+JPA 는 단순히 DB 에 쿼리를 대신 날려주는 도구라고 보긴 어렵습니다.
+
+DB 에 쿼리를 날리기 전, 내부 로직을 통해 최종 전달할 쿼리를 최적화 해주는 도구죠. 하나의 트랜잭션에서 불필요한 쿼리가 발생하는 것을 막아주기도 하죠.
+
+JDBC 만 가지고 개발할 때에 비해 개발자들이 전달하는 쿼리들을 어느정도는 최적화시켜주기는 하지만 SQL 쿼리 자체를 튜닝시켜주는 것은 아닙니다. 불필요하게 여러번 호출하지 않도록 도와주는 역할을 하죠.
+
+다만, 이런 경우는 있습니다. 실무를 하다보면 단순 엔티티 SELECT 를 했다고 생각하지만, DBA 입장에서는 이런 이야기를 할 수도 있어요.
+
+> 아니 왜 자꾸 SELECT \* 를 때리는거야! JPA 는 이래서 안돼!
+
+**꼭 필요한 컬럼들만 조회하는게 사실은 맞기는 합니다.** 물론 테이블을 미니멀하게 잘 설계해뒀다면 괜찮겠지만, 매번 그렇지는 못할 수 있다는 것은 감안하고 사용해야 합니다. 우리가 늘 신규 서비스만 개발하는 건 아니니까요.
+
+특히 오래된 서비스를 건들게 된다면, 가끔은 옆으로 뚱뚱한데 데이터 양까지 많은 테이블을 건드리는 경우가 생깁니다. 이 경우에는 절대 JPA 를 만능으로 생각해서는 안됩니다.
+
+다음 포스팅은 JPA 사용 팁입니다. 어떻게 하면 실무에서 더 잘 쓸 수 있을 지 내용들을 정리해서 작성 해 보도록 하겠습니다.
+
+읽어주셔서 감사합니다!
